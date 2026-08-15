@@ -128,7 +128,7 @@ Perfil → Vaga → Análise → Revisão → Gerar
 ```
 
 1. **Perfil:** revise seu histórico profissional reutilizável.
-2. **Vaga:** informe empresa, cargo e descrição completa da oportunidade.
+2. **Vaga:** cole o link de uma página pública para preencher empresa, cargo e descrição com Codex ou Claude; revise os dados antes de salvar. Você também pode importar um arquivo ou preencher manualmente.
 3. **Análise:** escolha Codex ou Claude e acompanhe as atividades em tempo real.
 4. **Revisão:** aceite ou rejeite cada sugestão. Nas lacunas, use **Adicionar ao currículo** somente quando puder fornecer uma experiência real relacionada.
 5. **Gerar:** selecione os idiomas, confira a prévia e baixe os PDFs.
@@ -143,6 +143,7 @@ O encAIxa é local, mas a análise por IA não é offline:
 - perfil, vagas, decisões e arquivos gerados ficam na pasta `storage/`;
 - `storage/` é ignorada pelo Git e não deve ser publicada;
 - perfil e vaga são enviados somente ao provedor escolhido quando você solicita uma operação com IA;
+- ao capturar uma vaga por link, a aplicação acessa a página pública em um navegador temporário e envia seu conteúdo ao provedor escolhido; páginas autenticadas não são suportadas;
 - Codex e Claude rodam em sessões temporárias, sem ferramentas de escrita no projeto;
 - o perfil-base não é alterado pelas sugestões de uma candidatura.
 

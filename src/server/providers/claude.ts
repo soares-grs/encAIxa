@@ -5,6 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import {
   gapDraftSchema,
+  jobDraftSchema,
   optimizationSchema,
   profileDraftSchema,
   profileSchema,
@@ -13,8 +14,10 @@ import {
 import optimizationJsonSchema from "../../../schemas/optimization.schema.json" with { type: "json" };
 import profileJsonSchema from "../../../schemas/profile.schema.json" with { type: "json" };
 import gapDraftJsonSchema from "../../../schemas/gap-draft.schema.json" with { type: "json" };
+import jobDraftJsonSchema from "../../../schemas/job-draft.schema.json" with { type: "json" };
 import {
   gapFillPrompt,
+  jobExtractionPrompt,
   optimizationPrompt,
   profileExtractionPrompt,
   translationPrompt,
@@ -318,6 +321,11 @@ export const claudeProvider: AiProvider = {
   async extractProfile(resumeText: string, report?: ProviderActivityReporter) {
     return profileDraftSchema.parse(
       await structured(profileExtractionPrompt(resumeText), profileJsonSchema, report),
+    );
+  },
+  async extractJob(pageContent: string, report?: ProviderActivityReporter) {
+    return jobDraftSchema.parse(
+      await structured(jobExtractionPrompt(pageContent), jobDraftJsonSchema, report),
     );
   },
   async fillGap(input) {

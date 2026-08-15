@@ -12,6 +12,7 @@ import {
   FileText,
   History,
   Languages,
+  Link2,
   LoaderCircle,
   Menu,
   Moon,
@@ -37,6 +38,7 @@ import type {
   Optimization,
   Profile,
   JobWorkflow,
+  JobImportProgressEvent,
 } from "../shared/schemas";
 import {
   Accordion,
@@ -72,12 +74,14 @@ import { useTheme } from "@/theme";
 import { api } from "@/api";
 import Onboarding, { type OnboardingState } from "@/Onboarding";
 import { streamAnalysis } from "@/analysis-stream";
+import { streamJobImport } from "@/job-import-stream";
 
 type Job = {
   id: string;
   company: string;
   role: string;
   text: string;
+  sourceUrl?: string;
   analysis?: Optimization;
   decisions?: Decision[];
   createdAt?: string;
@@ -101,6 +105,14 @@ type ProviderStatus = {
   error?: string;
 };
 type ProviderStatuses = Record<ProviderId, ProviderStatus>;
+const providerInfo = {
+  codex: { label: "Codex", company: "OpenAI", install: "npm install -g @openai/codex" },
+  claude: {
+    label: "Claude",
+    company: "Anthropic",
+    install: "npm install -g @anthropic-ai/claude-code",
+  },
+} as const;
 const emptyProviderStatus: ProviderStatus = {
   installed: false,
   authenticated: false,
@@ -170,6 +182,7 @@ export default function App() {
   const [onboarding, setOnboarding] = useState<OnboardingState | null>(null);
   const [bootstrapped, setBootstrapped] = useState(false);
   const [analysisRun, setAnalysisRun] = useState<AnalysisRun | null>(null);
+  const [jobImportProgress, setJobImportProgress] = useState<JobImportProgressEvent | null>(null);
   const historyRequest = useRef(0);
   const decisionSaveQueue = useRef(Promise.resolve());
   const load = () =>
@@ -226,6 +239,30 @@ export default function App() {
       form.append("file", file);
       const data = await api<{ text: string }>("/api/import", { method: "POST", body: form });
       setJob((j) => ({ ...j, text: data.text }));
+    });
+  const importJobUrl = () =>
+    work("Capturando vaga...", "Dados da vaga capturados", async () => {
+      setJobImportProgress({
+        type: "progress",
+        stage: "validating_url",
+        progress: 3,
+        title: "Iniciando a captura",
+        message: "Preparando o acesso à página pública.",
+      });
+      try {
+        const data = await streamJobImport(job.sourceUrl || "", provider, (event) => {
+          if (event.type === "progress") setJobImportProgress(event);
+        });
+        setJob((current) => ({
+          ...current,
+          company: data.company || current.company,
+          role: data.role || current.role,
+          text: data.text || current.text,
+          sourceUrl: data.sourceUrl,
+        }));
+      } finally {
+        setJobImportProgress(null);
+      }
     });
   const saveJob = () =>
     work("Salvando vaga...", "Vaga salva", async () => {
@@ -456,7 +493,19 @@ export default function App() {
     step === 0 ? (
       <ProfileStep profile={profile} setProfile={setProfile} onSave={saveProfile} busy={!!busy} />
     ) : step === 1 ? (
-      <JobStep job={job} setJob={setJob} onFile={importFile} onSave={saveJob} busy={!!busy} />
+      <JobStep
+        job={job}
+        setJob={setJob}
+        onFile={importFile}
+        onImportUrl={importJobUrl}
+        onSave={saveJob}
+        busy={!!busy}
+        statuses={statuses}
+        provider={provider}
+        setProvider={setProvider}
+        login={login}
+        importProgress={jobImportProgress}
+      />
     ) : step === 2 ? (
       <AnalysisStep
         statuses={statuses}
@@ -1044,25 +1093,97 @@ function JobStep({
   job,
   setJob,
   onFile,
+  onImportUrl,
   onSave,
   busy,
+  statuses,
+  provider,
+  setProvider,
+  login,
+  importProgress,
 }: {
   job: Job;
   setJob: (job: Job) => void;
   onFile: (file: File) => void;
+  onImportUrl: () => void;
   onSave: () => void;
   busy: boolean;
+  statuses: ProviderStatuses;
+  provider: ProviderId;
+  setProvider: (provider: ProviderId) => void;
+  login: (provider: ProviderId) => void;
+  importProgress: JobImportProgressEvent | null;
 }) {
+  const selected = statuses[provider];
   return (
     <Card>
       <CardHeader>
         <SectionTitle
           icon={BriefcaseBusiness}
           title="Dados da oportunidade"
-          description="Importe ou cole a descrição completa para uma análise melhor."
+          description="Cole o link e deixe a IA preencher os dados, ou use uma das opções manuais."
         />
       </CardHeader>
       <CardContent className="space-y-6">
+        <div className="space-y-4 rounded-xl border bg-muted/20 p-5">
+          <div>
+            <div className="flex items-center gap-2 font-semibold">
+              <Link2 className="size-4 text-primary" />
+              Capturar pelo link da vaga
+            </div>
+            <p className="mt-1 text-sm text-muted-foreground">
+              Funciona com páginas públicas. Você poderá revisar tudo antes de salvar.
+            </p>
+          </div>
+          <Field
+            label="Link da vaga"
+            value={job.sourceUrl || ""}
+            onChange={(value) => setJob({ ...job, sourceUrl: value || undefined })}
+            placeholder="https://empresa.com/vagas/..."
+          />
+          <div className="flex flex-wrap items-center gap-2">
+            {(["codex", "claude"] as const).map((id) => (
+              <Button
+                key={id}
+                type="button"
+                size="sm"
+                variant={provider === id ? "default" : "outline"}
+                disabled={busy || !statuses[id].installed}
+                onClick={() => setProvider(id)}
+              >
+                {providerInfo[id].label}
+                <span className="opacity-75">
+                  {statuses[id].authenticated ? "· conectado" : "· desconectado"}
+                </span>
+              </Button>
+            ))}
+          </div>
+          {importProgress && (
+            <div className="space-y-2 rounded-lg border bg-background p-4" aria-live="polite">
+              <div className="flex items-center justify-between gap-3 text-sm">
+                <span className="flex items-center gap-2 font-medium">
+                  <LoaderCircle className="size-4 animate-spin text-primary" />
+                  {importProgress.title}
+                </span>
+                <span className="text-muted-foreground">{importProgress.progress}%</span>
+              </div>
+              <Progress value={importProgress.progress} />
+              <p className="text-xs text-muted-foreground">{importProgress.message}</p>
+            </div>
+          )}
+          <Button
+            type="button"
+            disabled={busy || !job.sourceUrl || !selected.installed || selected.loginRunning}
+            onClick={selected.authenticated ? onImportUrl : () => login(provider)}
+          >
+            {selected.authenticated ? <Sparkles className="size-4" /> : <Wifi className="size-4" />}
+            {selected.authenticated
+              ? "Capturar dados da vaga"
+              : selected.installed
+                ? `Conectar ${providerInfo[provider].label}`
+                : `${providerInfo[provider].label} não instalado`}
+          </Button>
+        </div>
         <div className="grid gap-5 sm:grid-cols-2">
           <Field
             label="Empresa"
@@ -1099,6 +1220,17 @@ function JobStep({
           onChange={(v) => setJob({ ...job, text: v })}
           placeholder="Responsabilidades, requisitos e diferenciais..."
         />
+        {job.sourceUrl && (!job.company || !job.role || job.text.length < 20) && !busy && (
+          <Alert>
+            <AlertCircle className="size-4" />
+            <div>
+              <strong>Confira os dados capturados</strong>
+              <p className="text-sm text-muted-foreground">
+                Complete manualmente os campos que não estavam disponíveis na página.
+              </p>
+            </div>
+          </Alert>
+        )}
       </CardContent>
       <CardFooter className="justify-end">
         <Button
@@ -1135,14 +1267,6 @@ function AnalysisStep({
   changeProvider: () => void;
 }) {
   const selected = statuses[provider];
-  const providerInfo = {
-    codex: { label: "Codex", company: "OpenAI", install: "npm install -g @openai/codex" },
-    claude: {
-      label: "Claude",
-      company: "Anthropic",
-      install: "npm install -g @anthropic-ai/claude-code",
-    },
-  } as const;
   if (run)
     return (
       <AnalysisProgressCard

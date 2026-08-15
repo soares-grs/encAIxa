@@ -1,0 +1,11 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["company", "role", "text"],
+  "properties": {
+    "company": { "type": "string" },
+    "role": { "type": "string" },
+    "text": { "type": "string" }
+  }
+}

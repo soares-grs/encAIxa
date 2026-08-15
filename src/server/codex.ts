@@ -5,6 +5,7 @@ import path from "node:path";
 import { existsSync } from "node:fs";
 import {
   gapDraftSchema,
+  jobDraftSchema,
   optimizationSchema,
   profileDraftSchema,
   type Profile,
@@ -13,6 +14,7 @@ import { ProviderError, type ProviderActivityReporter } from "./providers/types.
 import {
   optimizationPrompt,
   gapFillPrompt,
+  jobExtractionPrompt,
   profileExtractionPrompt,
   translationPrompt,
 } from "./providers/prompts.js";
@@ -212,6 +214,40 @@ export async function extractProfile(resumeText: string, report?: ProviderActivi
       throw new Error(response.stderr.trim() || "Não foi possível importar o currículo.");
     report?.("result_received");
     return profileDraftSchema.parse(JSON.parse(await fs.readFile(resultPath, "utf8")));
+  } finally {
+    await fs.rm(temp, { recursive: true, force: true });
+  }
+}
+export async function extractJob(pageContent: string, report?: ProviderActivityReporter) {
+  const temp = await fs.mkdtemp(path.join(os.tmpdir(), "encaixa-job-import-"));
+  const resultPath = path.join(temp, "result.json");
+  try {
+    report?.("session_started");
+    report?.("response_in_progress");
+    const response = await runCodex(
+      [
+        "exec",
+        "--ephemeral",
+        "--ignore-user-config",
+        "--ignore-rules",
+        "--sandbox",
+        "read-only",
+        "--skip-git-repo-check",
+        "-C",
+        temp,
+        "--output-schema",
+        path.resolve("schemas", "job-draft.schema.json"),
+        "--output-last-message",
+        resultPath,
+        "-",
+      ],
+      jobExtractionPrompt(pageContent),
+      180_000,
+    );
+    if (response.code !== 0)
+      throw new Error(response.stderr.trim() || "Não foi possível extrair os dados da vaga.");
+    report?.("result_received");
+    return jobDraftSchema.parse(JSON.parse(await fs.readFile(resultPath, "utf8")));
   } finally {
     await fs.rm(temp, { recursive: true, force: true });
   }

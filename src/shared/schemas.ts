@@ -97,6 +97,11 @@ export const gapDraftSchema = z.object({
   evidenceRefs: z.array(z.string()),
   missingInfo: z.string(),
 });
+export const jobDraftSchema = z.object({
+  company: z.string().default(""),
+  role: z.string().default(""),
+  text: z.string().default(""),
+});
 export const optimizationSchema = z.object({
   role: z.string(),
   company: z.string(),
@@ -127,6 +132,7 @@ export type ProfileDraft = z.infer<typeof profileDraftSchema>;
 export type Optimization = z.infer<typeof optimizationSchema>;
 export type Suggestion = z.infer<typeof suggestionSchema>;
 export type GapDraft = z.infer<typeof gapDraftSchema>;
+export type JobDraft = z.infer<typeof jobDraftSchema>;
 export type OutputFile = z.infer<typeof outputFileSchema>;
 export type JobWorkflow = z.infer<typeof jobWorkflowSchema>;
 export type Decision = { suggestionId: string; accepted: boolean };
@@ -205,3 +211,41 @@ export type ImportStreamEvent =
   | ImportHeartbeatEvent
   | ImportCompleteEvent
   | ImportErrorEvent;
+
+export type JobImportStage =
+  "validating_url" | "checking_provider" | "loading_page" | "extracting" | "validating";
+export type JobImportProgressEvent = {
+  type: "progress";
+  stage: JobImportStage;
+  progress: number;
+  title: string;
+  message: string;
+};
+export type JobImportActivityEvent = {
+  type: "activity";
+  stage: JobImportStage;
+  message: string;
+  timestamp: string;
+};
+export type JobImportHeartbeatEvent = {
+  type: "heartbeat";
+  stage: JobImportStage;
+  timestamp: string;
+  elapsedMs: number;
+};
+export type JobImportCompleteEvent = {
+  type: "complete";
+  data: JobDraft & { sourceUrl: string; provider: "codex" | "claude" };
+};
+export type JobImportErrorEvent = {
+  type: "error";
+  stage: JobImportStage;
+  message: string;
+  statusCode: number;
+};
+export type JobImportStreamEvent =
+  | JobImportProgressEvent
+  | JobImportActivityEvent
+  | JobImportHeartbeatEvent
+  | JobImportCompleteEvent
+  | JobImportErrorEvent;

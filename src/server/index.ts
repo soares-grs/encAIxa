@@ -6,6 +6,7 @@ import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import {
   profileDraftSchema,
+  jobDraftSchema,
   type AnalysisActivityEvent,
   type AnalysisProgressEvent,
   type AnalysisStage,
@@ -13,6 +14,9 @@ import {
   type ImportActivityEvent,
   type ImportProgressEvent,
   type ImportStage,
+  type JobImportActivityEvent,
+  type JobImportProgressEvent,
+  type JobImportStage,
 } from "../shared/schemas.js";
 import { codexStatus, startLogin } from "./codex.js";
 import {
@@ -25,6 +29,7 @@ import {
 } from "./providers/index.js";
 import { ProviderError } from "./providers/types.js";
 import { extractText } from "./importer.js";
+import { captureJobPage } from "./job-page.js";
 import { applyDecisions, generatePdf, renderResume } from "./resume.js";
 import {
   jobDir,
@@ -262,11 +267,121 @@ app.post(
     res.json({ text: await extractText(req.file) });
   }),
 );
+app.post("/api/jobs/extract/stream", async (req: any, res: any) => {
+  let stage: JobImportStage = "validating_url";
+  const startedAt = Date.now();
+  const send = (event: object) => {
+    if (!res.writableEnded) res.write(`${JSON.stringify(event)}\n`);
+  };
+  res.status(200);
+  res.set({
+    "Content-Type": "application/x-ndjson; charset=utf-8",
+    "Cache-Control": "no-cache, no-transform",
+    Connection: "keep-alive",
+    "X-Accel-Buffering": "no",
+  });
+  res.flushHeaders();
+  const progress = (event: Omit<JobImportProgressEvent, "type">) => {
+    stage = event.stage;
+    send({ type: "progress", ...event });
+  };
+  const activity = (message: string) =>
+    send({
+      type: "activity",
+      stage,
+      message,
+      timestamp: new Date().toISOString(),
+    } satisfies JobImportActivityEvent);
+  const heartbeat = setInterval(
+    () =>
+      send({
+        type: "heartbeat",
+        stage,
+        timestamp: new Date().toISOString(),
+        elapsedMs: Date.now() - startedAt,
+      }),
+    5_000,
+  );
+  try {
+    const input = z
+      .object({ url: z.string().min(1).max(2_048), provider: z.enum(["codex", "claude"]) })
+      .parse(req.body);
+    progress({
+      stage: "validating_url",
+      progress: 8,
+      title: "Validando o link",
+      message: "Conferindo se a página é pública e segura para acesso.",
+    });
+    progress({
+      stage: "checking_provider",
+      progress: 18,
+      title: "Verificando a IA",
+      message: "Confirmando que o provedor escolhido está conectado.",
+    });
+    const provider = await requireReady(getProvider(input.provider));
+    progress({
+      stage: "loading_page",
+      progress: 30,
+      title: "Abrindo a página da vaga",
+      message: "Carregando conteúdo público, metadados e dados estruturados.",
+    });
+    const page = await captureJobPage(input.url);
+    activity("Conteúdo público da página carregado com segurança.");
+    progress({
+      stage: "extracting",
+      progress: 52,
+      title: `${provider.label} está identificando a oportunidade`,
+      message: "Separando empresa, cargo, responsabilidades e requisitos.",
+    });
+    const activityMessages = {
+      session_started: `Sessão segura do ${provider.label} iniciada.`,
+      response_in_progress: `${provider.label} está estruturando os dados da vaga.`,
+      response_refined: `${provider.label} está refinando a descrição.`,
+      result_received: `Resposta do ${provider.label} recebida.`,
+    } as const;
+    const draft = await executeProvider(() =>
+      provider.extractJob(page.content, (providerActivity) =>
+        activity(activityMessages[providerActivity]),
+      ),
+    );
+    progress({
+      stage: "validating",
+      progress: 92,
+      title: "Preparando sua revisão",
+      message: "Validando os campos extraídos antes de preencher o formulário.",
+    });
+    send({
+      type: "complete",
+      data: { ...jobDraftSchema.parse(draft), sourceUrl: page.sourceUrl, provider: input.provider },
+    });
+  } catch (error) {
+    send({
+      type: "error",
+      stage,
+      message:
+        error instanceof z.ZodError
+          ? error.issues.map((issue) => issue.message).join("; ")
+          : error instanceof Error
+            ? error.message
+            : "Não foi possível capturar os dados da vaga.",
+      statusCode:
+        error instanceof ProviderError ? error.statusCode : error instanceof z.ZodError ? 400 : 500,
+    });
+  } finally {
+    clearInterval(heartbeat);
+    res.end();
+  }
+});
 app.post(
   "/api/jobs",
   wrap(async (req: any, res: any) => {
     const body = z
-      .object({ company: z.string().min(1), role: z.string().min(1), text: z.string().min(20) })
+      .object({
+        company: z.string().min(1),
+        role: z.string().min(1),
+        text: z.string().min(20),
+        sourceUrl: z.string().url().max(2_048).optional(),
+      })
       .parse(req.body);
     const id = makeJobId(body.company, body.role);
     const createdAt = new Date().toISOString();
@@ -306,6 +421,7 @@ app.put(
         company: z.string().min(1),
         role: z.string().min(1),
         text: z.string().min(20),
+        sourceUrl: z.string().url().max(2_048).optional(),
         invalidate: z.boolean().default(false),
       })
       .parse(req.body);
@@ -318,6 +434,7 @@ app.put(
       company: body.company,
       role: body.role,
       text: body.text,
+      sourceUrl: body.sourceUrl,
       updatedAt: new Date().toISOString(),
     });
     if (body.invalidate) await invalidateJobDerived(req.params.id);

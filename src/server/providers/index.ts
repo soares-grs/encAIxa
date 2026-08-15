@@ -1,6 +1,7 @@
 import {
   codexStatus,
   extractProfile,
+  extractJob,
   fillGap,
   optimize,
   startLogin,
@@ -17,6 +18,7 @@ const codexProvider: AiProvider = {
   optimize,
   translateProfile,
   extractProfile,
+  extractJob,
   fillGap,
 };
 const providers: Record<ProviderId, AiProvider> = { codex: codexProvider, claude: claudeProvider };

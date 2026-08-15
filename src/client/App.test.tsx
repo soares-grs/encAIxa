@@ -51,18 +51,43 @@ beforeEach(() => {
                     loginOutput: "",
                   },
                 }
-              : url === "/api/jobs" && options?.method === "POST"
-                ? {
-                    id: "job-1",
-                    company: "Acme",
-                    role: "Dev",
-                    text: "Descrição completa para a vaga",
-                  }
-                : [];
+              : url === "/api/jobs/extract/stream"
+                ? [
+                    {
+                      type: "progress",
+                      stage: "extracting",
+                      progress: 52,
+                      title: "Extraindo",
+                      message: "Identificando a vaga",
+                    },
+                    {
+                      type: "complete",
+                      data: {
+                        sourceUrl: "https://jobs.example.com/dev",
+                        provider: "codex",
+                        company: "Acme",
+                        role: "Dev",
+                        text: "Descrição completa capturada da oportunidade",
+                      },
+                    },
+                  ]
+                    .map((event) => JSON.stringify(event))
+                    .join("\n") + "\n"
+                : url === "/api/jobs" && options?.method === "POST"
+                  ? {
+                      id: "job-1",
+                      company: "Acme",
+                      role: "Dev",
+                      text: "Descrição completa para a vaga",
+                    }
+                  : [];
       return Promise.resolve(
-        new Response(JSON.stringify(data), {
+        new Response(url === "/api/jobs/extract/stream" ? String(data) : JSON.stringify(data), {
           status: 200,
-          headers: { "Content-Type": "application/json" },
+          headers: {
+            "Content-Type":
+              url === "/api/jobs/extract/stream" ? "application/x-ndjson" : "application/json",
+          },
         }),
       );
     }),
@@ -111,6 +136,23 @@ describe("App", () => {
     await userEvent.click(screen.getByRole("button", { name: /Salvar vaga e continuar/ }));
     expect(await screen.findByRole("button", { name: /Claude Anthropic/ })).toBeInTheDocument();
     expect(screen.getByText("Desconectado")).toBeInTheDocument();
+  });
+  it("captura uma vaga pública pelo link e mantém os campos para revisão", async () => {
+    render(
+      <ThemeProvider>
+        <App />
+      </ThemeProvider>,
+    );
+    await screen.findByDisplayValue("Ana");
+    await userEvent.click(screen.getByRole("button", { name: /Salvar e continuar/ }));
+    await userEvent.type(screen.getByLabelText("Link da vaga"), "https://jobs.example.com/dev");
+    await userEvent.click(screen.getByRole("button", { name: "Capturar dados da vaga" }));
+    expect(await screen.findByDisplayValue("Acme")).toBeInTheDocument();
+    expect(screen.getByDisplayValue("Dev")).toBeInTheDocument();
+    expect(
+      screen.getByDisplayValue("Descrição completa capturada da oportunidade"),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Salvar vaga e continuar/ })).toBeEnabled();
   });
   it("restaura a etapa, idiomas e arquivos de uma candidatura do histórico", async () => {
     const baseFetch = fetch as ReturnType<typeof vi.fn>;

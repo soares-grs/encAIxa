@@ -1,4 +1,10 @@
-import type { GapDraft, Optimization, Profile, ProfileDraft } from "../../shared/schemas.js";
+import type {
+  GapDraft,
+  JobDraft,
+  Optimization,
+  Profile,
+  ProfileDraft,
+} from "../../shared/schemas.js";
 
 export type ProviderId = "codex" | "claude";
 export type ProviderStatus = {
@@ -30,6 +36,7 @@ export interface AiProvider {
   ): Promise<Optimization>;
   translateProfile(profile: Profile): Promise<Profile>;
   extractProfile(resumeText: string, report?: ProviderActivityReporter): Promise<ProfileDraft>;
+  extractJob(pageContent: string, report?: ProviderActivityReporter): Promise<JobDraft>;
   fillGap(input: GapFillInput): Promise<GapDraft>;
 }
 
