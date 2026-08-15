@@ -6,6 +6,8 @@ import {
   CheckCircle2,
   ChevronRight,
   CircleUserRound,
+  Clock3,
+  Database,
   Download,
   FileText,
   History,
@@ -14,16 +16,25 @@ import {
   Menu,
   Moon,
   Plus,
+  RotateCcw,
+  SearchCheck,
   Send,
   Sparkles,
   Sun,
+  ShieldCheck,
   Trash2,
   Upload,
   Wifi,
   WifiOff,
   XCircle,
 } from "lucide-react";
-import type { Decision, Optimization, Profile } from "../shared/schemas";
+import type {
+  AnalysisProgressEvent,
+  AnalysisStage,
+  Decision,
+  Optimization,
+  Profile,
+} from "../shared/schemas";
 import {
   Accordion,
   AccordionContent,
@@ -53,6 +64,7 @@ import { cn } from "@/lib/utils";
 import { useTheme } from "@/theme";
 import { api } from "@/api";
 import Onboarding, { type OnboardingState } from "@/Onboarding";
+import { streamAnalysis } from "@/analysis-stream";
 
 type Job = {
   id: string;
@@ -82,6 +94,7 @@ const emptyProviderStatus: ProviderStatus = {
   version: "",
 };
 type OutputFile = { name: string; url: string; pages: number; lang: string };
+export type AnalysisRun = { event: AnalysisProgressEvent; startedAt: number; error?: string };
 const steps = [
   { label: "Perfil", icon: CircleUserRound },
   { label: "Vaga", icon: BriefcaseBusiness },
@@ -133,6 +146,7 @@ export default function App() {
   const [langs, setLangs] = useState<string[]>(["ptbr"]);
   const [onboarding, setOnboarding] = useState<OnboardingState | null>(null);
   const [bootstrapped, setBootstrapped] = useState(false);
+  const [analysisRun, setAnalysisRun] = useState<AnalysisRun | null>(null);
   const load = () =>
     Promise.all([
       api<OnboardingState>("/api/onboarding"),
@@ -195,17 +209,40 @@ export default function App() {
       setStep(2);
       await load();
     });
-  const analyze = () =>
-    work("Analisando aderência...", "Análise concluída", async () => {
-      const result = await api<Optimization & { score: number }>(`/api/jobs/${job.id}/analyze`, {
-        method: "POST",
-        body: JSON.stringify({ provider }),
+  const analyze = async () => {
+    setError("");
+    let latest: AnalysisProgressEvent = {
+      type: "progress",
+      stage: "preparing",
+      progress: 3,
+      title: "Iniciando a análise",
+      message: "Preparando uma sessão segura com o provedor escolhido.",
+    };
+    setAnalysisRun({ event: latest, startedAt: Date.now() });
+    try {
+      const result = await streamAnalysis(job.id, provider, (event) => {
+        latest = event;
+        setAnalysisRun((current) => ({
+          event,
+          startedAt: current?.startedAt || Date.now(),
+        }));
       });
       setJob((current) => ({ ...current, provider }));
       setAnalysis(result);
       setDecisions(Object.fromEntries(result.suggestions.map((s) => [s.id, false])));
+      setAnalysisRun(null);
       setStep(3);
-    });
+      toast.success("Análise concluída");
+    } catch (caught) {
+      const message = caught instanceof Error ? caught.message : "A análise não foi concluída.";
+      setAnalysisRun((current) => ({
+        event: current?.event || latest,
+        startedAt: current?.startedAt || Date.now(),
+        error: message,
+      }));
+      toast.error(message);
+    }
+  };
   const saveReview = () =>
     work("Salvando revisão...", "Revisão salva", async () => {
       const list = Object.entries(decisions).map(([suggestionId, accepted]) => ({
@@ -253,7 +290,9 @@ export default function App() {
         job={job}
         login={login}
         analyze={analyze}
-        busy={!!busy}
+        busy={!!busy || Boolean(analysisRun && !analysisRun.error)}
+        run={analysisRun}
+        changeProvider={() => setAnalysisRun(null)}
       />
     ) : step === 3 && analysis ? (
       <ReviewStep
@@ -874,6 +913,8 @@ function AnalysisStep({
   login,
   analyze,
   busy,
+  run,
+  changeProvider,
 }: {
   statuses: ProviderStatuses;
   provider: ProviderId;
@@ -882,6 +923,8 @@ function AnalysisStep({
   login: (provider: ProviderId) => void;
   analyze: () => void;
   busy: boolean;
+  run: AnalysisRun | null;
+  changeProvider: () => void;
 }) {
   const selected = statuses[provider];
   const providerInfo = {
@@ -892,6 +935,16 @@ function AnalysisStep({
       install: "npm install -g @anthropic-ai/claude-code",
     },
   } as const;
+  if (run)
+    return (
+      <AnalysisProgressCard
+        run={run}
+        provider={providerInfo[provider].label}
+        job={job}
+        retry={analyze}
+        changeProvider={changeProvider}
+      />
+    );
   return (
     <div className="space-y-5">
       <div className="grid gap-4 sm:grid-cols-2">
@@ -982,6 +1035,156 @@ function AnalysisStep({
         </CardContent>
       </Card>
     </div>
+  );
+}
+
+const analysisStages: Array<{
+  id: AnalysisStage;
+  label: string;
+  icon: typeof Database;
+}> = [
+  { id: "preparing", label: "Perfil e vaga preparados", icon: Database },
+  { id: "checking_provider", label: "Provedor verificado", icon: ShieldCheck },
+  { id: "analyzing", label: "Análise pela IA", icon: Sparkles },
+  { id: "processing_result", label: "Resultado validado", icon: SearchCheck },
+  { id: "saving", label: "Análise salva", icon: CheckCircle2 },
+];
+const analysisTips = [
+  "Estamos cruzando suas experiências com os requisitos da vaga.",
+  "Evidências concretas valem mais do que palavras-chave soltas.",
+  "Seu perfil-base permanece intacto durante toda a análise.",
+  "Estamos procurando lacunas sem inventar qualificações.",
+];
+
+export function AnalysisProgressCard({
+  run,
+  provider,
+  job,
+  retry,
+  changeProvider,
+}: {
+  run: AnalysisRun;
+  provider: string;
+  job: Job;
+  retry: () => void;
+  changeProvider: () => void;
+}) {
+  const [elapsed, setElapsed] = useState(() => Math.floor((Date.now() - run.startedAt) / 1000));
+  const [tip, setTip] = useState(0);
+  useEffect(() => {
+    if (run.error) return;
+    const elapsedTimer = setInterval(
+      () => setElapsed(Math.floor((Date.now() - run.startedAt) / 1000)),
+      1000,
+    );
+    const tipTimer = setInterval(
+      () => setTip((current) => (current + 1) % analysisTips.length),
+      6000,
+    );
+    return () => {
+      clearInterval(elapsedTimer);
+      clearInterval(tipTimer);
+    };
+  }, [run.error, run.startedAt]);
+  const activeIndex = analysisStages.findIndex((stage) => stage.id === run.event.stage);
+  const time = `${String(Math.floor(elapsed / 60)).padStart(2, "0")}:${String(elapsed % 60).padStart(2, "0")}`;
+  return (
+    <Card className="overflow-hidden" aria-live="polite">
+      <div
+        className={cn(
+          "h-1 bg-gradient-to-r from-transparent via-primary to-transparent",
+          !run.error && "animate-pulse",
+          run.error && "via-destructive",
+        )}
+      />
+      <CardContent className="p-6 sm:p-9">
+        <div className="flex flex-col gap-6 lg:flex-row lg:items-start lg:justify-between">
+          <div className="flex gap-4">
+            <div
+              className={cn(
+                "grid size-14 shrink-0 place-items-center rounded-2xl bg-primary/10 text-primary",
+                run.error && "bg-destructive/10 text-destructive",
+              )}
+            >
+              {run.error ? (
+                <XCircle className="size-7" />
+              ) : (
+                <Sparkles className="size-7 animate-pulse" />
+              )}
+            </div>
+            <div>
+              <Badge variant={run.error ? "destructive" : "secondary"}>
+                {run.error ? "Análise interrompida" : `${provider} trabalhando`}
+              </Badge>
+              <h2 className="mt-3 text-xl font-bold sm:text-2xl">
+                {run.error ? "Não foi possível concluir" : run.event.title}
+              </h2>
+              <p className="mt-1 max-w-xl text-sm text-muted-foreground">
+                {run.error || run.event.message}
+              </p>
+              <p className="mt-2 text-xs font-medium text-muted-foreground">
+                {job.role} <span aria-hidden="true">·</span> {job.company}
+              </p>
+            </div>
+          </div>
+          <div className="flex items-center gap-2 self-start rounded-lg border bg-muted/40 px-3 py-2 text-sm tabular-nums text-muted-foreground">
+            <Clock3 className="size-4" /> {time}
+          </div>
+        </div>
+        <Progress
+          value={run.event.progress}
+          aria-label="Progresso da análise"
+          className="mt-7 h-2.5"
+        />
+        <p className="mt-2 text-right text-[11px] text-muted-foreground">
+          Progresso baseado nas etapas concluídas
+        </p>
+        <div className="mt-7 grid gap-2 sm:grid-cols-5">
+          {analysisStages.map(({ id, label, icon: Icon }, index) => {
+            const completed = index < activeIndex;
+            const active = index === activeIndex;
+            return (
+              <div
+                key={id}
+                className={cn(
+                  "rounded-lg border p-3 text-xs text-muted-foreground transition-colors",
+                  active && !run.error && "border-primary/40 bg-primary/5 text-foreground",
+                  active && run.error && "border-destructive/40 bg-destructive/5 text-destructive",
+                  completed && "text-foreground",
+                )}
+              >
+                <Icon className={cn("mb-2 size-4", (active || completed) && "text-primary")} />
+                {label}
+              </div>
+            );
+          })}
+        </div>
+        {!run.error && run.event.stage === "analyzing" && (
+          <div className="mt-6 flex items-start gap-3 rounded-xl bg-muted/50 p-4 text-sm text-muted-foreground">
+            <Sparkles className="mt-0.5 size-4 shrink-0 text-primary" />
+            <span key={tip} className="animate-in fade-in duration-500">
+              {analysisTips[tip]}
+            </span>
+          </div>
+        )}
+        {run.error && (
+          <div className="mt-7 flex flex-wrap justify-end gap-3">
+            <Button variant="outline" onClick={changeProvider}>
+              Trocar provedor
+            </Button>
+            <Button onClick={retry}>
+              <RotateCcw className="size-4" /> Tentar novamente
+            </Button>
+          </div>
+        )}
+        {!run.error && (
+          <p className="mt-6 text-center text-xs text-muted-foreground">
+            A análise costuma levar de alguns segundos a poucos minutos. Você não precisa recarregar
+            a página.
+          </p>
+        )}
+      </CardContent>
+    </Card>
   );
 }
 

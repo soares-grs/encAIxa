@@ -3,7 +3,12 @@ import multer from "multer";
 import path from "node:path";
 import fs from "node:fs/promises";
 import { z } from "zod";
-import { profileDraftSchema, type Decision } from "../shared/schemas.js";
+import {
+  profileDraftSchema,
+  type AnalysisProgressEvent,
+  type AnalysisStage,
+  type Decision,
+} from "../shared/schemas.js";
 import { codexStatus, startLogin } from "./codex.js";
 import {
   getProvider,
@@ -162,19 +167,45 @@ app.get(
 app.post(
   "/api/jobs/:id/analyze",
   wrap(async (req: any, res: any) => {
-    const job = await readJob(req.params.id);
-    const providerId: ProviderId = isProviderId(req.body?.provider)
-      ? req.body.provider
-      : isProviderId(job.provider)
-        ? job.provider
-        : "codex";
-    const provider = await requireReady(getProvider(providerId));
-    const analysis = await executeProvider(async () => provider.optimize(await readProfile(), job));
-    await saveJob(req.params.id, { ...job, provider: providerId });
-    await saveAnalysis(req.params.id, analysis);
-    res.json({ ...analysis, score: score(analysis.requirements) });
+    res.json(await analyzeJob(req.params.id, req.body?.provider));
   }),
 );
+app.post("/api/jobs/:id/analyze/stream", async (req: any, res: any) => {
+  res.status(200);
+  res.set({
+    "Content-Type": "application/x-ndjson; charset=utf-8",
+    "Cache-Control": "no-cache, no-transform",
+    Connection: "keep-alive",
+    "X-Accel-Buffering": "no",
+  });
+  res.flushHeaders();
+  let currentStage: AnalysisStage = "preparing";
+  const send = (event: object) => {
+    if (!res.writableEnded) res.write(`${JSON.stringify(event)}\n`);
+  };
+  try {
+    const data = await analyzeJob(req.params.id, req.body?.provider, (event) => {
+      currentStage = event.stage;
+      send(event);
+    });
+    send({ type: "complete", data });
+  } catch (error) {
+    send({
+      type: "error",
+      stage: currentStage,
+      message:
+        error instanceof z.ZodError
+          ? error.issues.map((issue) => issue.message).join("; ")
+          : error instanceof Error
+            ? error.message
+            : "Erro inesperado durante a análise.",
+      statusCode:
+        error instanceof ProviderError ? error.statusCode : error instanceof z.ZodError ? 400 : 500,
+    });
+  } finally {
+    res.end();
+  }
+});
 app.put(
   "/api/jobs/:id/decisions",
   wrap(async (req: any, res: any) => {
@@ -239,6 +270,59 @@ app.get(
     res.download(path.join(paths.output, req.params.id, req.params.file));
   }),
 );
+async function analyzeJob(
+  id: string,
+  requestedProvider: unknown,
+  report: (event: AnalysisProgressEvent) => void = () => {},
+) {
+  report({
+    type: "progress",
+    stage: "preparing",
+    progress: 8,
+    title: "Preparando sua candidatura",
+    message: "Carregando seu perfil e a descrição da vaga.",
+  });
+  const [job, profile] = await Promise.all([readJob(id), readProfile()]);
+  const providerId: ProviderId = isProviderId(requestedProvider)
+    ? requestedProvider
+    : isProviderId(job.provider)
+      ? job.provider
+      : "codex";
+  report({
+    type: "progress",
+    stage: "checking_provider",
+    progress: 18,
+    title: "Verificando o provedor",
+    message: `Confirmando que o ${providerId === "claude" ? "Claude" : "Codex"} está disponível e conectado.`,
+  });
+  const provider = await requireReady(getProvider(providerId));
+  report({
+    type: "progress",
+    stage: "analyzing",
+    progress: 36,
+    title: `${provider.label} está analisando a vaga`,
+    message: "Comparando requisitos com evidências reais da sua trajetória.",
+  });
+  const analysis = await executeProvider(() => provider.optimize(profile, job));
+  report({
+    type: "progress",
+    stage: "processing_result",
+    progress: 82,
+    title: "Conferindo o resultado",
+    message: "Validando requisitos, lacunas e sugestões antes de exibir tudo para você.",
+  });
+  const result = { ...analysis, score: score(analysis.requirements) };
+  report({
+    type: "progress",
+    stage: "saving",
+    progress: 94,
+    title: "Salvando a análise",
+    message: "Guardando o resultado somente nesta candidatura.",
+  });
+  await saveJob(id, { ...job, provider: providerId });
+  await saveAnalysis(id, analysis);
+  return result;
+}
 function score(requirements: any[]) {
   const max = requirements.reduce((n, r) => n + (r.kind === "required" ? 2 : 1), 0);
   const got = requirements.reduce(

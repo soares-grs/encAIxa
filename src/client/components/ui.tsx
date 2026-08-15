@@ -158,6 +158,7 @@ export function Progress({
 }: React.ComponentPropsWithoutRef<typeof ProgressPrimitive.Root>) {
   return (
     <ProgressPrimitive.Root
+      value={value}
       className={cn("relative h-2 w-full overflow-hidden rounded-full bg-secondary", className)}
       {...props}
     >

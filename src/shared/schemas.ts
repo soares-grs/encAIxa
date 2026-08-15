@@ -103,3 +103,24 @@ export type ProfileDraft = z.infer<typeof profileDraftSchema>;
 export type Optimization = z.infer<typeof optimizationSchema>;
 export type Suggestion = z.infer<typeof suggestionSchema>;
 export type Decision = { suggestionId: string; accepted: boolean };
+export type AnalysisStage =
+  "preparing" | "checking_provider" | "analyzing" | "processing_result" | "saving";
+export type AnalysisProgressEvent = {
+  type: "progress";
+  stage: AnalysisStage;
+  progress: number;
+  title: string;
+  message: string;
+};
+export type AnalysisCompleteEvent = {
+  type: "complete";
+  data: Optimization & { score: number };
+};
+export type AnalysisErrorEvent = {
+  type: "error";
+  stage: AnalysisStage;
+  message: string;
+  statusCode: number;
+};
+export type AnalysisStreamEvent =
+  AnalysisProgressEvent | AnalysisCompleteEvent | AnalysisErrorEvent;
