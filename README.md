@@ -1,6 +1,6 @@
 # encAIxa
 
-O **encAIxa** é uma aplicação web local para manter um perfil profissional, analisar vagas com o Codex CLI, revisar cada sugestão e gerar currículos ATS em PDF.
+O **encAIxa** é uma aplicação web local para manter um perfil profissional, analisar vagas com Codex ou Claude, revisar cada sugestão e gerar currículos ATS em PDF.
 
 ## Como funciona
 
@@ -9,8 +9,15 @@ O assistente conduz o fluxo **Perfil → Vaga → Análise → Revisão → Gera
 ## Requisitos
 
 - Node.js 22 ou superior
-- Codex CLI instalado
+- Codex CLI ou Claude Code CLI instalado
 - Microsoft Edge ou Google Chrome
+
+Instale ao menos um dos provedores:
+
+```powershell
+npm.cmd install -g @openai/codex
+npm.cmd install -g @anthropic-ai/claude-code
+```
 
 ## Instalação e uso
 
@@ -19,7 +26,7 @@ npm.cmd install
 npm.cmd start
 ```
 
-Abra `http://127.0.0.1:3001`. Na primeira análise, conecte o Codex seguindo o código de autenticação mostrado na interface.
+Abra `http://127.0.0.1:3001`. Na primeira análise, escolha Codex ou Claude e conecte o CLI seguindo a autenticação mostrada na interface.
 
 Durante o desenvolvimento:
 
@@ -35,7 +42,7 @@ npm.cmd run build
 examples/       perfil fictício usado no primeiro uso
 schemas/        contratos JSON das respostas estruturadas
 src/client/     interface React
-src/server/     API local, Codex, persistência e PDF
+src/server/     API local, provedores de IA, persistência e PDF
 src/shared/     schemas e tipos compartilhados
 storage/        perfil, vagas e PDFs reais (ignorado pelo Git)
 ```
@@ -46,8 +53,8 @@ Quando `storage/profile.json` não existe, a aplicação cria uma cópia local d
 
 - O servidor escuta somente em `127.0.0.1` e rejeita origens externas.
 - `storage/` não entra no Git.
-- O Codex é executado em sessão efêmera, sandbox somente leitura e diretório temporário.
-- Perfil e vaga são enviados ao serviço usado pelo Codex apenas quando o usuário inicia a análise.
+- Codex e Claude são executados em sessões efêmeras, sem ferramentas de escrita e em diretórios temporários.
+- Perfil e vaga são enviados somente ao provedor escolhido quando o usuário inicia a análise.
 - Arquivos importados são limitados a DOCX, PDF, TXT e Markdown de até 10 MB.
 
 ## Dados gerados

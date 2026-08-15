@@ -18,14 +18,36 @@ const profile = {
 beforeEach(() => {
   vi.stubGlobal(
     "fetch",
-    vi.fn((input: RequestInfo | URL) => {
+    vi.fn((input: RequestInfo | URL, options?: RequestInit) => {
       const url = String(input);
       const data =
         url === "/api/profile"
           ? profile
-          : url === "/api/codex/status"
-            ? { authenticated: true, version: "1.0" }
-            : [];
+          : url === "/api/providers/status"
+            ? {
+                codex: {
+                  installed: true,
+                  authenticated: true,
+                  version: "1.0",
+                  loginRunning: false,
+                  loginOutput: "",
+                },
+                claude: {
+                  installed: true,
+                  authenticated: false,
+                  version: "2.0",
+                  loginRunning: false,
+                  loginOutput: "",
+                },
+              }
+            : url === "/api/jobs" && options?.method === "POST"
+              ? {
+                  id: "job-1",
+                  company: "Acme",
+                  role: "Dev",
+                  text: "Descrição completa para a vaga",
+                }
+              : [];
       return Promise.resolve(
         new Response(JSON.stringify(data), {
           status: 200,
@@ -60,5 +82,23 @@ describe("App", () => {
       expect(screen.getByRole("heading", { name: "Descrição da vaga" })).toBeInTheDocument(),
     );
     expect(screen.getByRole("button", { name: /Salvar vaga e continuar/ })).toBeDisabled();
+  });
+  it("mostra os provedores disponíveis na análise", async () => {
+    render(
+      <ThemeProvider>
+        <App />
+      </ThemeProvider>,
+    );
+    await screen.findByDisplayValue("Ana");
+    await userEvent.click(screen.getByRole("button", { name: /Salvar e continuar/ }));
+    await userEvent.type(screen.getByLabelText("Empresa"), "Acme");
+    await userEvent.type(screen.getByLabelText("Cargo"), "Dev");
+    await userEvent.type(
+      screen.getByLabelText("Ou cole a descrição completa"),
+      "Descrição completa para a vaga",
+    );
+    await userEvent.click(screen.getByRole("button", { name: /Salvar vaga e continuar/ }));
+    expect(await screen.findByRole("button", { name: /Claude Anthropic/ })).toBeInTheDocument();
+    expect(screen.getByText("Desconectado")).toBeInTheDocument();
   });
 });

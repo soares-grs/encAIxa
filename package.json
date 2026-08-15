@@ -2,7 +2,7 @@
   "name": "encaixa",
   "version": "2.0.0",
   "private": true,
-  "description": "encAIxa — aplicação local para otimizar currículos por vaga com Codex",
+  "description": "encAIxa — aplicação local para otimizar currículos por vaga com IA",
   "author": "Gabriel Ribeiro Soares",
   "license": "MIT",
   "scripts": {

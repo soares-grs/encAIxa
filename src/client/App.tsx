@@ -60,12 +60,24 @@ type Job = {
   analysis?: Optimization;
   decisions?: Decision[];
   createdAt?: string;
+  provider?: ProviderId;
 };
-type CodexStatus = {
-  authenticated?: boolean;
-  loginRunning?: boolean;
-  loginOutput?: string;
-  version?: string;
+type ProviderId = "codex" | "claude";
+type ProviderStatus = {
+  installed: boolean;
+  authenticated: boolean;
+  loginRunning: boolean;
+  loginOutput: string;
+  version: string;
+  error?: string;
+};
+type ProviderStatuses = Record<ProviderId, ProviderStatus>;
+const emptyProviderStatus: ProviderStatus = {
+  installed: false,
+  authenticated: false,
+  loginRunning: false,
+  loginOutput: "",
+  version: "",
 };
 type OutputFile = { name: string; url: string; pages: number; lang: string };
 const steps = [
@@ -117,7 +129,11 @@ export default function App() {
   const [job, setJob] = useState<Job>({ id: "", company: "", role: "", text: "" });
   const [analysis, setAnalysis] = useState<(Optimization & { score?: number }) | null>(null);
   const [decisions, setDecisions] = useState<Record<string, boolean>>({});
-  const [status, setStatus] = useState<CodexStatus>({});
+  const [statuses, setStatuses] = useState<ProviderStatuses>({
+    codex: emptyProviderStatus,
+    claude: emptyProviderStatus,
+  });
+  const [provider, setProvider] = useState<ProviderId>("codex");
   const [history, setHistory] = useState<Job[]>([]);
   const [busy, setBusy] = useState("");
   const [error, setError] = useState("");
@@ -126,12 +142,12 @@ export default function App() {
   const load = () =>
     Promise.all([
       api<Profile>("/api/profile"),
-      api<CodexStatus>("/api/codex/status"),
+      api<ProviderStatuses>("/api/providers/status"),
       api<Job[]>("/api/jobs"),
     ])
       .then(([p, s, h]) => {
         setProfile(p);
-        setStatus(s);
+        setStatuses(s);
         setHistory(h);
       })
       .catch((e) => setError(e.message));
@@ -139,11 +155,14 @@ export default function App() {
     void load();
   }, []);
   useEffect(() => {
-    if (status.loginRunning) {
-      const timer = setTimeout(() => api<CodexStatus>("/api/codex/status").then(setStatus), 1500);
+    if (statuses.codex.loginRunning || statuses.claude.loginRunning) {
+      const timer = setTimeout(
+        () => api<ProviderStatuses>("/api/providers/status").then(setStatuses),
+        1500,
+      );
       return () => clearTimeout(timer);
     }
-  }, [status]);
+  }, [statuses]);
   const work = async (label: string, success: string, fn: () => Promise<void>) => {
     setBusy(label);
     setError("");
@@ -181,7 +200,9 @@ export default function App() {
     work("Analisando aderência...", "Análise concluída", async () => {
       const result = await api<Optimization & { score: number }>(`/api/jobs/${job.id}/analyze`, {
         method: "POST",
+        body: JSON.stringify({ provider }),
       });
+      setJob((current) => ({ ...current, provider }));
       setAnalysis(result);
       setDecisions(Object.fromEntries(result.suggestions.map((s) => [s.id, false])));
       setStep(3);
@@ -207,6 +228,7 @@ export default function App() {
     work("Abrindo candidatura...", "", async () => {
       const saved = await api<Job>(`/api/jobs/${id}`);
       setJob(saved);
+      setProvider(saved.provider || "codex");
       setAnalysis(saved.analysis ? { ...saved.analysis } : null);
       setDecisions(
         Object.fromEntries((saved.decisions || []).map((d) => [d.suggestionId, d.accepted])),
@@ -214,10 +236,10 @@ export default function App() {
       setFiles([]);
       setStep(saved.analysis ? 3 : 2);
     });
-  const login = () =>
+  const login = (selectedProvider: ProviderId) =>
     work("Iniciando login...", "", async () => {
-      await api("/api/codex/login", { method: "POST" });
-      setStatus(await api<CodexStatus>("/api/codex/status"));
+      await api(`/api/providers/${selectedProvider}/login`, { method: "POST" });
+      setStatuses(await api<ProviderStatuses>("/api/providers/status"));
     });
   const content =
     step === 0 ? (
@@ -225,7 +247,15 @@ export default function App() {
     ) : step === 1 ? (
       <JobStep job={job} setJob={setJob} onFile={importFile} onSave={saveJob} busy={!!busy} />
     ) : step === 2 ? (
-      <AnalysisStep status={status} job={job} login={login} analyze={analyze} busy={!!busy} />
+      <AnalysisStep
+        statuses={statuses}
+        provider={provider}
+        setProvider={setProvider}
+        job={job}
+        login={login}
+        analyze={analyze}
+        busy={!!busy}
+      />
     ) : step === 3 && analysis ? (
       <ReviewStep
         analysis={analysis}
@@ -252,7 +282,7 @@ export default function App() {
           setStep={setStep}
           history={history}
           openHistory={openHistory}
-          status={status}
+          statuses={statuses}
         />
       </aside>
       <div className="min-w-0">
@@ -261,7 +291,7 @@ export default function App() {
           setStep={setStep}
           history={history}
           openHistory={openHistory}
-          status={status}
+          statuses={statuses}
         />
         <main className="mx-auto w-full max-w-6xl px-4 py-6 sm:px-8 sm:py-10 lg:px-12">
           <PageHeader step={step} />
@@ -317,13 +347,13 @@ function Sidebar({
   setStep,
   history,
   openHistory,
-  status,
+  statuses,
 }: {
   step: number;
   setStep: (n: number) => void;
   history: Job[];
   openHistory: (id: string) => void;
-  status: CodexStatus;
+  statuses: ProviderStatuses;
 }) {
   return (
     <>
@@ -388,20 +418,24 @@ function Sidebar({
           )}
         </div>
       </div>
-      <div className="m-4 flex items-center gap-3 rounded-xl border bg-muted/50 p-3">
-        {status.authenticated ? (
-          <Wifi className="size-4 text-primary" />
-        ) : (
-          <WifiOff className="size-4 text-muted-foreground" />
-        )}
-        <div className="min-w-0">
-          <strong className="block text-xs">
-            Codex {status.authenticated ? "conectado" : "desconectado"}
-          </strong>
-          <span className="block truncate text-[11px] text-muted-foreground">
-            {status.version || "CLI não encontrado"}
-          </span>
-        </div>
+      <div className="m-4 space-y-2 rounded-xl border bg-muted/50 p-3">
+        {(["codex", "claude"] as const).map((id) => (
+          <div className="flex items-center gap-2" key={id}>
+            {statuses[id].authenticated ? (
+              <Wifi className="size-3.5 text-primary" />
+            ) : (
+              <WifiOff className="size-3.5 text-muted-foreground" />
+            )}
+            <div className="min-w-0">
+              <strong className="block text-xs capitalize">
+                {id} {statuses[id].authenticated ? "conectado" : "desconectado"}
+              </strong>
+              <span className="block truncate text-[10px] text-muted-foreground">
+                {statuses[id].version || "CLI não encontrado"}
+              </span>
+            </div>
+          </div>
+        ))}
       </div>
     </>
   );
@@ -813,61 +847,121 @@ function JobStep({
 }
 
 function AnalysisStep({
-  status,
+  statuses,
+  provider,
+  setProvider,
   job,
   login,
   analyze,
   busy,
 }: {
-  status: CodexStatus;
+  statuses: ProviderStatuses;
+  provider: ProviderId;
+  setProvider: (provider: ProviderId) => void;
   job: Job;
-  login: () => void;
+  login: (provider: ProviderId) => void;
   analyze: () => void;
   busy: boolean;
 }) {
+  const selected = statuses[provider];
+  const providerInfo = {
+    codex: { label: "Codex", company: "OpenAI", install: "npm install -g @openai/codex" },
+    claude: {
+      label: "Claude",
+      company: "Anthropic",
+      install: "npm install -g @anthropic-ai/claude-code",
+    },
+  } as const;
   return (
-    <Card className="overflow-hidden">
-      <div className="h-1 bg-gradient-to-r from-primary via-emerald-300 to-primary" />
-      <CardContent className="flex min-h-[430px] flex-col items-center justify-center px-6 py-14 text-center">
-        <div className="mb-5 grid size-16 place-items-center rounded-2xl bg-primary/10 text-primary">
-          <Sparkles className="size-8" />
-        </div>
-        <Badge variant={status.authenticated ? "default" : "secondary"} className="mb-4">
-          {status.authenticated ? "Codex conectado" : "Conexão necessária"}
-        </Badge>
-        <h2 className="text-2xl font-bold">
-          {status.authenticated ? "Tudo pronto para analisar" : "Conecte o Codex uma vez"}
-        </h2>
-        <p className="mt-3 max-w-xl text-muted-foreground">
-          {status.authenticated
-            ? `Vamos comparar seu perfil à vaga de ${job.role} na ${job.company}. O perfil-base nunca será alterado.`
-            : "A análise usa sua autenticação local do Codex e envia o perfil e a vaga ao serviço da OpenAI."}
-        </p>
-        {status.loginOutput && (
-          <pre className="mt-6 max-h-48 w-full max-w-2xl overflow-auto rounded-lg bg-slate-950 p-4 text-left text-xs text-slate-100">
-            {status.loginOutput}
-          </pre>
-        )}
-        <Button
-          size="default"
-          className="mt-7"
-          disabled={busy}
-          onClick={status.authenticated ? analyze : login}
-        >
-          {status.authenticated ? (
-            <>
-              <Sparkles className="size-4" />
-              Analisar aderência
-            </>
-          ) : (
-            <>
-              <Wifi className="size-4" />
-              Conectar Codex
-            </>
+    <div className="space-y-5">
+      <div className="grid gap-4 sm:grid-cols-2">
+        {(["codex", "claude"] as const).map((id) => {
+          const status = statuses[id];
+          const info = providerInfo[id];
+          return (
+            <button
+              type="button"
+              key={id}
+              disabled={!status.installed}
+              onClick={() => setProvider(id)}
+              className={cn(
+                "rounded-xl border bg-card p-5 text-left shadow-sm transition-all hover:border-primary/50 disabled:cursor-not-allowed disabled:opacity-60",
+                provider === id && "border-primary ring-2 ring-primary/20",
+              )}
+            >
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <strong className="text-lg">{info.label}</strong>
+                  <p className="text-sm text-muted-foreground">{info.company}</p>
+                </div>
+                <Badge variant={status.authenticated ? "default" : "secondary"}>
+                  {!status.installed
+                    ? "Não instalado"
+                    : status.authenticated
+                      ? "Conectado"
+                      : "Desconectado"}
+                </Badge>
+              </div>
+              <p className="mt-4 truncate text-xs text-muted-foreground">
+                {status.version || info.install}
+              </p>
+            </button>
+          );
+        })}
+      </div>
+      <Card className="overflow-hidden">
+        <div className="h-px bg-gradient-to-r from-transparent via-primary/70 to-transparent" />
+        <CardContent className="flex min-h-[380px] flex-col items-center justify-center px-6 py-12 text-center">
+          <div className="mb-5 grid size-16 place-items-center rounded-2xl bg-primary/10 text-primary">
+            <Sparkles className="size-8" />
+          </div>
+          <Badge variant={selected.authenticated ? "default" : "secondary"} className="mb-4">
+            {selected.authenticated
+              ? `${providerInfo[provider].label} conectado`
+              : "Conexão necessária"}
+          </Badge>
+          <h2 className="text-2xl font-bold">
+            {selected.authenticated
+              ? "Tudo pronto para analisar"
+              : selected.installed
+                ? `Conecte o ${providerInfo[provider].label} uma vez`
+                : `${providerInfo[provider].label} CLI não instalado`}
+          </h2>
+          <p className="mt-3 max-w-xl text-muted-foreground">
+            {selected.authenticated
+              ? `Vamos comparar seu perfil à vaga de ${job.role} na ${job.company}. O perfil-base nunca será alterado.`
+              : selected.installed
+                ? `A autenticação é feita localmente pelo ${providerInfo[provider].label} CLI.`
+                : `Instale com: ${providerInfo[provider].install}`}
+          </p>
+          {selected.loginOutput && (
+            <pre className="mt-6 max-h-48 w-full max-w-2xl overflow-auto rounded-lg bg-slate-950 p-4 text-left text-xs text-slate-100">
+              {selected.loginOutput}
+            </pre>
           )}
-        </Button>
-      </CardContent>
-    </Card>
+          <Button
+            size="default"
+            className="mt-7"
+            disabled={busy || !selected.installed || selected.loginRunning}
+            onClick={selected.authenticated ? analyze : () => login(provider)}
+          >
+            {selected.authenticated ? (
+              <>
+                <Sparkles className="size-4" />
+                Analisar aderência
+              </>
+            ) : (
+              <>
+                <Wifi className="size-4" />
+                {selected.loginRunning
+                  ? "Aguardando login..."
+                  : `Conectar ${providerInfo[provider].label}`}
+              </>
+            )}
+          </Button>
+        </CardContent>
+      </Card>
+    </div>
   );
 }
 
@@ -1047,6 +1141,11 @@ function GenerateStep({
                 {language.label}
               </Label>
             ))}
+            {langs.includes("en") && (
+              <span className="self-center text-xs text-muted-foreground">
+                Tradução por {job.provider === "claude" ? "Claude" : "Codex"}
+              </span>
+            )}
           </div>
           <Button disabled={busy || !langs.length} onClick={generate}>
             <Send className="size-4" />

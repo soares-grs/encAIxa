@@ -4,7 +4,16 @@ import path from "node:path";
 import fs from "node:fs/promises";
 import { z } from "zod";
 import type { Decision } from "../shared/schemas.js";
-import { codexStatus, optimize, startLogin, translateProfile } from "./codex.js";
+import { codexStatus, startLogin } from "./codex.js";
+import {
+  getProvider,
+  executeProvider,
+  isProviderId,
+  providerStatuses,
+  requireReady,
+  type ProviderId,
+} from "./providers/index.js";
+import { ProviderError } from "./providers/types.js";
 import { extractText } from "./importer.js";
 import { applyDecisions, generatePdf, renderResume } from "./resume.js";
 import {
@@ -42,6 +51,21 @@ app.post("/api/codex/login", (_req, res) => {
   startLogin();
   res.status(202).json({ ok: true });
 });
+app.get(
+  "/api/providers/status",
+  wrap(async (_req: any, res: any) => res.json(await providerStatuses())),
+);
+app.post(
+  "/api/providers/:provider/login",
+  wrap(async (req: any, res: any) => {
+    const provider = getProvider(req.params.provider);
+    const status = await provider.status();
+    if (!status.installed)
+      throw new ProviderError(`${provider.label} CLI não está instalado.`, 409);
+    provider.startLogin();
+    res.status(202).json({ ok: true });
+  }),
+);
 app.get(
   "/api/profile",
   wrap(async (_req: any, res: any) => res.json(await readProfile())),
@@ -89,10 +113,15 @@ app.get(
 app.post(
   "/api/jobs/:id/analyze",
   wrap(async (req: any, res: any) => {
-    const status = await codexStatus();
-    if (!status.authenticated)
-      return res.status(409).json({ error: "Faça login no Codex antes de analisar." });
-    const analysis = await optimize(await readProfile(), await readJob(req.params.id));
+    const job = await readJob(req.params.id);
+    const providerId: ProviderId = isProviderId(req.body?.provider)
+      ? req.body.provider
+      : isProviderId(job.provider)
+        ? job.provider
+        : "codex";
+    const provider = await requireReady(getProvider(providerId));
+    const analysis = await executeProvider(async () => provider.optimize(await readProfile(), job));
+    await saveJob(req.params.id, { ...job, provider: providerId });
     await saveAnalysis(req.params.id, analysis);
     res.json({ ...analysis, score: score(analysis.requirements) });
   }),
@@ -131,12 +160,19 @@ app.post(
       .parse(req.body).languages;
     const profile = await readProfile(),
       analysis = await readAnalysis(req.params.id),
-      decisions = await readDecisions(req.params.id);
+      decisions = await readDecisions(req.params.id),
+      job = await readJob(req.params.id);
+    const providerId: ProviderId = isProviderId(job.provider) ? job.provider : "codex";
     const dir = path.join(paths.output, req.params.id);
     const files = [];
     for (const lang of langs) {
       const variant = applyDecisions(profile, analysis, decisions);
-      const finalProfile = lang === "en" ? await translateProfile(variant) : variant;
+      const finalProfile =
+        lang === "en"
+          ? await executeProvider(async () =>
+              (await requireReady(getProvider(providerId))).translateProfile(variant),
+            )
+          : variant;
       const html = await renderResume(finalProfile, lang, undefined, []);
       await fs.mkdir(dir, { recursive: true });
       await fs.writeFile(path.join(dir, `encaixa-${lang}.html`), html);
@@ -167,11 +203,13 @@ app.use(express.static(dist));
 app.get("/{*splat}", (_req, res) => res.sendFile(path.join(dist, "index.html")));
 app.use((err: any, _req: any, res: any, _next: any) => {
   console.error(err);
-  res.status(err instanceof z.ZodError ? 400 : 500).json({
-    error:
-      err instanceof z.ZodError
-        ? err.issues.map((i) => i.message).join("; ")
-        : err.message || "Erro inesperado.",
-  });
+  res
+    .status(err instanceof ProviderError ? err.statusCode : err instanceof z.ZodError ? 400 : 500)
+    .json({
+      error:
+        err instanceof z.ZodError
+          ? err.issues.map((i) => i.message).join("; ")
+          : err.message || "Erro inesperado.",
+    });
 });
 app.listen(3001, "127.0.0.1", () => console.log("encAIxa: http://127.0.0.1:3001"));

@@ -4,6 +4,8 @@ import os from "node:os";
 import path from "node:path";
 import { existsSync } from "node:fs";
 import { optimizationSchema, type Profile } from "../shared/schemas.js";
+import { ProviderError } from "./providers/types.js";
+import { optimizationPrompt, translationPrompt } from "./providers/prompts.js";
 
 const windowsCodex = path.join(process.env.APPDATA || "", "npm", "codex.cmd");
 const command =
@@ -25,7 +27,7 @@ function run(
       stderr = "";
     const timer = setTimeout(() => {
       child.kill();
-      reject(new Error("Tempo limite excedido."));
+      reject(new ProviderError("O Codex excedeu o tempo limite.", 504));
     }, timeout);
     child.stdout.on("data", (d) => (stdout += d));
     child.stderr.on("data", (d) => (stderr += d));
@@ -79,7 +81,7 @@ export async function optimize(
   const temp = await fs.mkdtemp(path.join(os.tmpdir(), "encaixa-codex-"));
   const resultPath = path.join(temp, "result.json");
   const schemaPath = path.resolve("schemas", "optimization.schema.json");
-  const prompt = `Você é um especialista em currículos ATS. Analise somente os fatos fornecidos. Não invente competências, números, cargos ou resultados. Lacunas devem permanecer como lacunas. Cada evidenceRefs deve citar literalmente um trecho ou caminho do PERFIL. Sugira mudanças individuais. Targets aceitos: summary; experience.N.bullets.N; skills. Para skills, original pode ser vazio e proposed deve ser uma lista separada por vírgulas.\n\nPERFIL:\n${JSON.stringify(profile)}\n\nVAGA:\n${JSON.stringify(job)}`;
+  const prompt = optimizationPrompt(profile, job);
   try {
     const args = [
       "exec",
@@ -108,7 +110,7 @@ export async function optimize(
 export async function translateProfile(profile: Profile) {
   const temp = await fs.mkdtemp(path.join(os.tmpdir(), "encaixa-translate-"));
   const resultPath = path.join(temp, "result.json");
-  const prompt = `Traduza este currículo para inglês profissional natural. Preserve rigorosamente empresas, tecnologias, números, links e todos os fatos. Não acrescente nem remova informação. Retorne apenas o JSON no schema fornecido. PERFIL: ${JSON.stringify(profile)}`;
+  const prompt = translationPrompt(profile);
   try {
     const response = await run(
       [
