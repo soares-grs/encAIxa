@@ -131,7 +131,8 @@ Perfil → Vaga → Análise → Revisão → Gerar
 2. **Vaga:** cole o link de uma página pública para preencher empresa, cargo e descrição com Codex ou Claude; revise os dados antes de salvar. Se necessário, complete os campos manualmente.
 3. **Análise:** escolha Codex ou Claude e acompanhe as atividades em tempo real.
 4. **Revisão:** aceite, edite ou rejeite cada sugestão. Nas lacunas, use **Adicionar ao currículo** para selecionar até três experiências e fornecer um contexto real específico para cada uma; a aderência evolui conforme as melhorias são aplicadas.
-5. **Gerar:** selecione os idiomas, confira a prévia e baixe os PDFs.
+5. **Gerar:** selecione os idiomas, confira a prévia e baixe os PDFs. O arquivo já vem
+   nomeado com seu nome, cargo e empresa; a versão em inglês recebe o sufixo `_EN`.
 
 Ao terminar, use **Analisar outra vaga** para começar uma nova candidatura com o mesmo perfil ou **Atualizar meu perfil** antes de continuar. A candidatura anterior permanece no histórico.
 

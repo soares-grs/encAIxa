@@ -33,6 +33,7 @@ import {
 import { ProviderError } from "./providers/types.js";
 import { extractText } from "./importer.js";
 import { captureJobPage } from "./job-page.js";
+import { resumeFilename } from "./filename.js";
 import { applyDecisions, generatePdf, renderResume } from "./resume.js";
 import {
   jobDir,
@@ -810,9 +811,14 @@ app.post(
       const html = await renderResume(finalProfile, lang, undefined, []);
       await fs.mkdir(dir, { recursive: true });
       await fs.writeFile(path.join(dir, `encaixa-${lang}.html`), html);
-      const name = `encaixa-${lang}.pdf`;
+      const name = resumeFilename(profile.name, job.role, job.company, lang);
       const pages = await generatePdf(html, path.join(dir, name));
-      files.push({ lang, name, pages, url: `/api/jobs/${req.params.id}/download/${name}` });
+      files.push({
+        lang,
+        name,
+        pages,
+        url: `/api/jobs/${req.params.id}/download/${encodeURIComponent(name)}`,
+      });
     }
     await updateWorkflow(req.params.id, {
       step: 4,
@@ -826,8 +832,12 @@ app.post(
 app.get(
   "/api/jobs/:id/download/:file",
   wrap(async (req: any, res: any) => {
-    if (!/^(encaixa|cv)-(ptbr|en)\.(pdf|html)$/.test(req.params.file)) return res.sendStatus(400);
-    res.download(path.join(paths.output, req.params.id, req.params.file));
+    const file = req.params.file;
+    if (path.basename(file) !== file || !file.toLowerCase().endsWith(".pdf"))
+      return res.sendStatus(400);
+    const workflow = await readWorkflow(req.params.id);
+    if (!workflow.files.some((entry) => entry.name === file)) return res.sendStatus(404);
+    res.download(path.join(paths.output, req.params.id, file), file);
   }),
 );
 async function analyzeJob(

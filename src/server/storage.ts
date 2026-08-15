@@ -173,12 +173,12 @@ export async function listOutputFiles(id: string): Promise<OutputFile[]> {
   try {
     const names = await fs.readdir(dir);
     return names
-      .filter((name) => /^(encaixa|cv)-(ptbr|en)\.pdf$/.test(name))
+      .filter((name) => name.toLowerCase().endsWith(".pdf"))
       .map((name) => ({
         name,
-        url: `/api/jobs/${id}/download/${name}`,
+        url: `/api/jobs/${id}/download/${encodeURIComponent(name)}`,
         pages: 0,
-        lang: name.includes("-en.") ? ("en" as const) : ("ptbr" as const),
+        lang: /(?:_EN|-en)\.pdf$/i.test(name) ? ("en" as const) : ("ptbr" as const),
       }));
   } catch {
     return [];
