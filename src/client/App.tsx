@@ -260,6 +260,16 @@ export default function App() {
       });
       setFiles(out.files);
     });
+  const startNextApplication = (target: "profile" | "job") => {
+    setJob({ id: "", company: "", role: "", text: "" });
+    setAnalysis(null);
+    setDecisions({});
+    setFiles([]);
+    setLangs(["ptbr"]);
+    setAnalysisRun(null);
+    setError("");
+    setStep(target === "profile" ? 0 : 1);
+  };
   const openHistory = (id: string) =>
     work("Abrindo candidatura...", "", async () => {
       const saved = await api<Job>(`/api/jobs/${id}`);
@@ -310,6 +320,8 @@ export default function App() {
         generate={generate}
         files={files}
         busy={!!busy}
+        startAnotherJob={() => startNextApplication("job")}
+        updateProfile={() => startNextApplication("profile")}
       />
     );
   if (!bootstrapped)
@@ -1326,13 +1338,15 @@ function ReviewStep({
   );
 }
 
-function GenerateStep({
+export function GenerateStep({
   job,
   langs,
   setLangs,
   generate,
   files,
   busy,
+  startAnotherJob,
+  updateProfile,
 }: {
   job: Job;
   langs: string[];
@@ -1340,6 +1354,8 @@ function GenerateStep({
   generate: () => void;
   files: OutputFile[];
   busy: boolean;
+  startAnotherJob: () => void;
+  updateProfile: () => void;
 }) {
   const toggle = (lang: string) =>
     setLangs(langs.includes(lang) ? langs.filter((item) => item !== lang) : [...langs, lang]);
@@ -1388,32 +1404,60 @@ function GenerateStep({
         />
       </Card>
       {files.length > 0 && (
-        <div className="grid gap-3 sm:grid-cols-2">
-          {files.map((file) => (
-            <Card key={file.name} className="transition-shadow hover:shadow-md">
-              <CardContent className="flex items-center gap-4 p-5">
-                <div className="grid size-11 place-items-center rounded-lg bg-primary/10 text-primary">
-                  <FileText className="size-5" />
+        <div className="space-y-5">
+          <div className="grid gap-3 sm:grid-cols-2">
+            {files.map((file) => (
+              <Card key={file.name} className="transition-shadow hover:shadow-md">
+                <CardContent className="flex items-center gap-4 p-5">
+                  <div className="grid size-11 place-items-center rounded-lg bg-primary/10 text-primary">
+                    <FileText className="size-5" />
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <strong className="block truncate text-sm">{file.name}</strong>
+                    <span
+                      className={cn(
+                        "text-xs text-muted-foreground",
+                        file.pages > 2 && "text-amber-600",
+                      )}
+                    >
+                      {file.pages} página(s) · {file.pages > 2 ? "revisar tamanho" : "pronto"}
+                    </span>
+                  </div>
+                  <Button asChild variant="outline" size="icon">
+                    <a href={file.url} aria-label={`Baixar ${file.name}`}>
+                      <Download className="size-4" />
+                    </a>
+                  </Button>
+                </CardContent>
+              </Card>
+            ))}
+          </div>
+          <Card className="border-primary/25 bg-primary/[0.04]">
+            <CardContent className="flex flex-col gap-5 p-6 sm:flex-row sm:items-center sm:justify-between">
+              <div className="flex gap-4">
+                <div className="grid size-11 shrink-0 place-items-center rounded-full bg-primary text-primary-foreground">
+                  <CheckCircle2 className="size-5" />
                 </div>
-                <div className="min-w-0 flex-1">
-                  <strong className="block truncate text-sm">{file.name}</strong>
-                  <span
-                    className={cn(
-                      "text-xs text-muted-foreground",
-                      file.pages > 2 && "text-amber-600",
-                    )}
-                  >
-                    {file.pages} página(s) · {file.pages > 2 ? "revisar tamanho" : "pronto"}
-                  </span>
+                <div>
+                  <h2 className="font-semibold">Candidatura pronta para enviar</h2>
+                  <p className="mt-1 max-w-xl text-sm text-muted-foreground">
+                    Seus arquivos estão prontos e esta candidatura ficou salva no histórico. Para a
+                    próxima vaga, você pode reutilizar seu perfil ou atualizá-lo antes.
+                  </p>
                 </div>
-                <Button asChild variant="outline" size="icon">
-                  <a href={file.url} aria-label={`Baixar ${file.name}`}>
-                    <Download className="size-4" />
-                  </a>
+              </div>
+              <div className="flex shrink-0 flex-col-reverse gap-2 sm:flex-row">
+                <Button variant="outline" onClick={updateProfile}>
+                  <CircleUserRound className="size-4" />
+                  Atualizar meu perfil
                 </Button>
-              </CardContent>
-            </Card>
-          ))}
+                <Button onClick={startAnotherJob}>
+                  <BriefcaseBusiness className="size-4" />
+                  Analisar outra vaga
+                </Button>
+              </div>
+            </CardContent>
+          </Card>
         </div>
       )}
     </div>
