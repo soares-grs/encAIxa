@@ -90,6 +90,13 @@ export const suggestionSchema = z.object({
   reason: z.string(),
   evidenceRefs: z.array(z.string()).min(1),
 });
+export const gapDraftSchema = z.object({
+  canAdd: z.boolean(),
+  proposed: z.string(),
+  reason: z.string(),
+  evidenceRefs: z.array(z.string()),
+  missingInfo: z.string(),
+});
 export const optimizationSchema = z.object({
   role: z.string(),
   company: z.string(),
@@ -102,6 +109,7 @@ export type Profile = z.infer<typeof profileSchema>;
 export type ProfileDraft = z.infer<typeof profileDraftSchema>;
 export type Optimization = z.infer<typeof optimizationSchema>;
 export type Suggestion = z.infer<typeof suggestionSchema>;
+export type GapDraft = z.infer<typeof gapDraftSchema>;
 export type Decision = { suggestionId: string; accepted: boolean };
 export type AnalysisStage =
   "preparing" | "checking_provider" | "analyzing" | "processing_result" | "saving";

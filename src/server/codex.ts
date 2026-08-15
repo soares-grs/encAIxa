@@ -3,10 +3,16 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { existsSync } from "node:fs";
-import { optimizationSchema, profileDraftSchema, type Profile } from "../shared/schemas.js";
+import {
+  gapDraftSchema,
+  optimizationSchema,
+  profileDraftSchema,
+  type Profile,
+} from "../shared/schemas.js";
 import { ProviderError, type ProviderActivityReporter } from "./providers/types.js";
 import {
   optimizationPrompt,
+  gapFillPrompt,
   profileExtractionPrompt,
   translationPrompt,
 } from "./providers/prompts.js";
@@ -176,6 +182,37 @@ export async function extractProfile(resumeText: string) {
     if (response.code !== 0)
       throw new Error(response.stderr.trim() || "Não foi possível importar o currículo.");
     return profileDraftSchema.parse(JSON.parse(await fs.readFile(resultPath, "utf8")));
+  } finally {
+    await fs.rm(temp, { recursive: true, force: true });
+  }
+}
+export async function fillGap(input: Parameters<typeof gapFillPrompt>[0]) {
+  const temp = await fs.mkdtemp(path.join(os.tmpdir(), "encaixa-gap-"));
+  const resultPath = path.join(temp, "result.json");
+  try {
+    const response = await run(
+      [
+        "exec",
+        "--ephemeral",
+        "--ignore-user-config",
+        "--ignore-rules",
+        "--sandbox",
+        "read-only",
+        "--skip-git-repo-check",
+        "-C",
+        temp,
+        "--output-schema",
+        path.resolve("schemas", "gap-draft.schema.json"),
+        "--output-last-message",
+        resultPath,
+        "-",
+      ],
+      gapFillPrompt(input),
+      180_000,
+    );
+    if (response.code !== 0)
+      throw new Error(response.stderr.trim() || "Não foi possível preencher a lacuna.");
+    return gapDraftSchema.parse(JSON.parse(await fs.readFile(resultPath, "utf8")));
   } finally {
     await fs.rm(temp, { recursive: true, force: true });
   }

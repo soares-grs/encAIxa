@@ -4,6 +4,7 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import {
+  gapDraftSchema,
   optimizationSchema,
   profileDraftSchema,
   profileSchema,
@@ -11,7 +12,13 @@ import {
 } from "../../shared/schemas.js";
 import optimizationJsonSchema from "../../../schemas/optimization.schema.json" with { type: "json" };
 import profileJsonSchema from "../../../schemas/profile.schema.json" with { type: "json" };
-import { optimizationPrompt, profileExtractionPrompt, translationPrompt } from "./prompts.js";
+import gapDraftJsonSchema from "../../../schemas/gap-draft.schema.json" with { type: "json" };
+import {
+  gapFillPrompt,
+  optimizationPrompt,
+  profileExtractionPrompt,
+  translationPrompt,
+} from "./prompts.js";
 import { ProviderError, type AiProvider, type ProviderActivityReporter } from "./types.js";
 
 type ClaudeInvocation = { command: string; args: string[] };
@@ -274,5 +281,8 @@ export const claudeProvider: AiProvider = {
     return profileDraftSchema.parse(
       await structured(profileExtractionPrompt(resumeText), profileJsonSchema),
     );
+  },
+  async fillGap(input) {
+    return gapDraftSchema.parse(await structured(gapFillPrompt(input), gapDraftJsonSchema));
   },
 };

@@ -38,6 +38,15 @@ const analysis: Optimization = {
       reason: "Clareza",
       evidenceRefs: ["experience.0.bullets.0"],
     },
+    {
+      id: "s3",
+      type: "bullet",
+      target: "experience.0.bullets.append",
+      original: "",
+      proposed: "Automatizou entregas com CI/CD.",
+      reason: "Preenche a lacuna.",
+      evidenceRefs: ["Contexto informado pelo usuário"],
+    },
   ],
 };
 describe("applyDecisions", () => {
@@ -45,9 +54,12 @@ describe("applyDecisions", () => {
     const result = applyDecisions(profile, analysis, [
       { suggestionId: "s1", accepted: true },
       { suggestionId: "s2", accepted: false },
+      { suggestionId: "s3", accepted: true },
     ]);
     expect(result.summary).toBe("Novo");
     expect(result.experience[0].bullets[0]).toBe("Bullet original");
+    expect(result.experience[0].bullets[1]).toBe("Automatizou entregas com CI/CD.");
+    expect(profile.experience[0].bullets).toHaveLength(1);
     expect(profile.summary).toBe("Original");
   });
 });

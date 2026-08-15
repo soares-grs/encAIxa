@@ -2,6 +2,7 @@ import express from "express";
 import multer from "multer";
 import path from "node:path";
 import fs from "node:fs/promises";
+import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import {
   profileDraftSchema,
@@ -220,6 +221,87 @@ app.post("/api/jobs/:id/analyze/stream", async (req: any, res: any) => {
     res.end();
   }
 });
+const gapContextSchema = z.object({
+  gap: z.string().min(1),
+  gapIndex: z.number().int().nonnegative(),
+  experienceIndex: z.number().int().nonnegative(),
+  context: z.string().trim().min(30, "Conte um pouco mais sobre essa experiência.").max(2_000),
+});
+app.post(
+  "/api/jobs/:id/gaps/draft",
+  wrap(async (req: any, res: any) => {
+    const input = gapContextSchema.parse(req.body);
+    const [analysis, profile, job] = await Promise.all([
+      readAnalysis(req.params.id),
+      readProfile(),
+      readJob(req.params.id),
+    ]);
+    const gap = analysis.gaps[input.gapIndex];
+    if (!gap || gap !== input.gap)
+      throw new ProviderError("Essa lacuna mudou. Atualize a candidatura e tente novamente.", 409);
+    const experience = profile.experience[input.experienceIndex];
+    if (!experience) throw new ProviderError("Experiência profissional inválida.", 400);
+    const providerId: ProviderId = isProviderId(job.provider) ? job.provider : "codex";
+    const provider = await requireReady(getProvider(providerId));
+    const draft = await executeProvider(() =>
+      provider.fillGap({ gap, context: input.context, experience }),
+    );
+    res.json(draft);
+  }),
+);
+app.post(
+  "/api/jobs/:id/gaps/confirm",
+  wrap(async (req: any, res: any) => {
+    const input = gapContextSchema
+      .extend({
+        proposed: z.string().trim().min(10).max(600),
+        reason: z.string().trim().min(1).max(1_000),
+        evidenceRefs: z.array(z.string().trim().min(1).max(500)).max(8),
+      })
+      .parse(req.body);
+    const [analysis, profile, decisions] = await Promise.all([
+      readAnalysis(req.params.id),
+      readProfile(),
+      readDecisions(req.params.id),
+    ]);
+    if (analysis.gaps[input.gapIndex] !== input.gap)
+      throw new ProviderError("Essa lacuna mudou. Atualize a candidatura e tente novamente.", 409);
+    if (!profile.experience[input.experienceIndex])
+      throw new ProviderError("Experiência profissional inválida.", 400);
+    const suggestionId = `gap-${randomUUID()}`;
+    const verifiedEvidence = input.evidenceRefs
+      .filter((reference) => input.context.includes(reference))
+      .slice(0, 5);
+    const updatedAnalysis = {
+      ...analysis,
+      gaps: analysis.gaps.filter((_, index) => index !== input.gapIndex),
+      suggestions: [
+        ...analysis.suggestions,
+        {
+          id: suggestionId,
+          type: "bullet" as const,
+          target: `experience.${input.experienceIndex}.bullets.append`,
+          original: "",
+          proposed: input.proposed,
+          reason: input.reason,
+          evidenceRefs: verifiedEvidence.length
+            ? verifiedEvidence
+            : [`Contexto informado pelo usuário: ${input.context.slice(0, 300)}`],
+        },
+      ],
+    };
+    const updatedDecisions = [
+      ...decisions.filter((decision) => decision.suggestionId !== suggestionId),
+      { suggestionId, accepted: true },
+    ];
+    await saveAnalysis(req.params.id, updatedAnalysis);
+    await saveDecisions(req.params.id, updatedDecisions);
+    res.json({
+      analysis: { ...updatedAnalysis, score: score(updatedAnalysis.requirements) },
+      decisions: updatedDecisions,
+    });
+  }),
+);
 app.put(
   "/api/jobs/:id/decisions",
   wrap(async (req: any, res: any) => {

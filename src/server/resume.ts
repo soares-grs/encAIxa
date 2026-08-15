@@ -20,6 +20,11 @@ export function applyDecisions(
   for (const suggestion of analysis?.suggestions ?? []) {
     if (!accepted.has(suggestion.id) || suggestion.type === "skills") continue;
     if (suggestion.target === "summary") result.summary = suggestion.proposed;
+    const append = suggestion.target.match(/^experience\.(\d+)\.bullets\.append$/);
+    if (append && result.experience[+append[1]]) {
+      result.experience[+append[1]].bullets.push(suggestion.proposed);
+      continue;
+    }
     const match = suggestion.target.match(/^experience\.(\d+)\.bullets\.(\d+)$/);
     if (match && result.experience[+match[1]]?.bullets[+match[2]] !== undefined)
       result.experience[+match[1]].bullets[+match[2]] = suggestion.proposed;

@@ -1,4 +1,4 @@
-import type { Optimization, Profile, ProfileDraft } from "../../shared/schemas.js";
+import type { GapDraft, Optimization, Profile, ProfileDraft } from "../../shared/schemas.js";
 
 export type ProviderId = "codex" | "claude";
 export type ProviderStatus = {
@@ -12,6 +12,11 @@ export type ProviderStatus = {
 export type ProviderActivity =
   "session_started" | "response_in_progress" | "response_refined" | "result_received";
 export type ProviderActivityReporter = (activity: ProviderActivity) => void;
+export type GapFillInput = {
+  gap: string;
+  context: string;
+  experience: Profile["experience"][number];
+};
 
 export interface AiProvider {
   id: ProviderId;
@@ -25,6 +30,7 @@ export interface AiProvider {
   ): Promise<Optimization>;
   translateProfile(profile: Profile): Promise<Profile>;
   extractProfile(resumeText: string): Promise<ProfileDraft>;
+  fillGap(input: GapFillInput): Promise<GapDraft>;
 }
 
 export class ProviderError extends Error {

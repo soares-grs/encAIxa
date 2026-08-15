@@ -1,4 +1,11 @@
-import { codexStatus, extractProfile, optimize, startLogin, translateProfile } from "../codex.js";
+import {
+  codexStatus,
+  extractProfile,
+  fillGap,
+  optimize,
+  startLogin,
+  translateProfile,
+} from "../codex.js";
 import { claudeProvider } from "./claude.js";
 import { ProviderError, type AiProvider, type ProviderId } from "./types.js";
 
@@ -10,6 +17,7 @@ const codexProvider: AiProvider = {
   optimize,
   translateProfile,
   extractProfile,
+  fillGap,
 };
 const providers: Record<ProviderId, AiProvider> = { codex: codexProvider, claude: claudeProvider };
 
