@@ -1,3 +1,4 @@
+// @vitest-environment node
 import { describe, expect, it } from "vitest";
 import { applyDecisions } from "./resume.js";
 import type { Optimization, Profile } from "../shared/schemas.js";
