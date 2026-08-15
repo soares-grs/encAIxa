@@ -116,6 +116,11 @@ export const outputFileSchema = z.object({
   pages: z.number().int().nonnegative(),
   lang: z.enum(["ptbr", "en"]),
 });
+export const decisionSchema = z.object({
+  suggestionId: z.string().min(1),
+  accepted: z.boolean(),
+  customText: z.string().trim().min(1).max(5_000).optional(),
+});
 export const jobWorkflowSchema = z.object({
   version: z.literal(1),
   step: z.union([z.literal(2), z.literal(3), z.literal(4)]),
@@ -135,7 +140,7 @@ export type GapDraft = z.infer<typeof gapDraftSchema>;
 export type JobDraft = z.infer<typeof jobDraftSchema>;
 export type OutputFile = z.infer<typeof outputFileSchema>;
 export type JobWorkflow = z.infer<typeof jobWorkflowSchema>;
-export type Decision = { suggestionId: string; accepted: boolean };
+export type Decision = z.infer<typeof decisionSchema>;
 export type AnalysisStage =
   "preparing" | "checking_provider" | "analyzing" | "processing_result" | "saving";
 export type AnalysisProgressEvent = {

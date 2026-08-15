@@ -50,6 +50,15 @@ const analysis: Optimization = {
       reason: "Preenche a lacuna.",
       evidenceRefs: ["Contexto informado pelo usuário"],
     },
+    {
+      id: "s4",
+      type: "skills",
+      target: "skills",
+      original: "",
+      proposed: "Java, TypeScript",
+      reason: "Prioriza competências relevantes.",
+      evidenceRefs: ["skills"],
+    },
   ],
 };
 const temporaryDirectories: string[] = [];
@@ -61,13 +70,15 @@ afterEach(async () => {
 describe("applyDecisions", () => {
   it("aplica apenas sugestões aceitas sem alterar o perfil-base", () => {
     const result = applyDecisions(profile, analysis, [
-      { suggestionId: "s1", accepted: true },
+      { suggestionId: "s1", accepted: true, customText: "Resumo personalizado" },
       { suggestionId: "s2", accepted: false },
-      { suggestionId: "s3", accepted: true },
+      { suggestionId: "s3", accepted: true, customText: "Automatizou deploys com CI/CD." },
+      { suggestionId: "s4", accepted: true, customText: "TypeScript\nReact, Node.js" },
     ]);
-    expect(result.summary).toBe("Novo");
+    expect(result.summary).toBe("Resumo personalizado");
     expect(result.experience[0].bullets[0]).toBe("Bullet original");
-    expect(result.experience[0].bullets[1]).toBe("Automatizou entregas com CI/CD.");
+    expect(result.experience[0].bullets[1]).toBe("Automatizou deploys com CI/CD.");
+    expect(result.skills).toEqual(["TypeScript", "React", "Node.js"]);
     expect(profile.experience[0].bullets).toHaveLength(1);
     expect(profile.summary).toBe("Original");
   });

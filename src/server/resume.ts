@@ -17,18 +17,31 @@ export function applyDecisions(
   decisions: Decision[] = [],
 ) {
   const result = structuredClone(profile);
-  const accepted = new Set(decisions.filter((d) => d.accepted).map((d) => d.suggestionId));
+  const accepted = new Map(
+    decisions
+      .filter((decision) => decision.accepted)
+      .map((decision) => [decision.suggestionId, decision]),
+  );
   for (const suggestion of analysis?.suggestions ?? []) {
-    if (!accepted.has(suggestion.id) || suggestion.type === "skills") continue;
-    if (suggestion.target === "summary") result.summary = suggestion.proposed;
+    const decision = accepted.get(suggestion.id);
+    if (!decision) continue;
+    const proposed = decision.customText || suggestion.proposed;
+    if (suggestion.type === "skills") {
+      result.skills = proposed
+        .split(/[,\n]/)
+        .map((skill) => skill.trim())
+        .filter(Boolean);
+      continue;
+    }
+    if (suggestion.target === "summary") result.summary = proposed;
     const append = suggestion.target.match(/^experience\.(\d+)\.bullets\.append$/);
     if (append && result.experience[+append[1]]) {
-      result.experience[+append[1]].bullets.push(suggestion.proposed);
+      result.experience[+append[1]].bullets.push(proposed);
       continue;
     }
     const match = suggestion.target.match(/^experience\.(\d+)\.bullets\.(\d+)$/);
     if (match && result.experience[+match[1]]?.bullets[+match[2]] !== undefined)
-      result.experience[+match[1]].bullets[+match[2]] = suggestion.proposed;
+      result.experience[+match[1]].bullets[+match[2]] = proposed;
   }
   return result;
 }
@@ -56,9 +69,17 @@ export async function renderResume(
 ) {
   const p = applyDecisions(profile, analysis, decisions);
   const l = labels[lang];
-  const relevant = analysis?.relevantSkills?.length
-    ? analysis.relevantSkills
-    : p.skills.slice(0, 24);
+  const hasAcceptedSkills = Boolean(
+    analysis?.suggestions.some(
+      (suggestion) =>
+        suggestion.type === "skills" &&
+        decisions.some((decision) => decision.suggestionId === suggestion.id && decision.accepted),
+    ),
+  );
+  const relevant =
+    !hasAcceptedSkills && analysis?.relevantSkills?.length
+      ? analysis.relevantSkills
+      : p.skills.slice(0, 24);
   const contacts = [
     p.contact.email,
     p.contact.phone,

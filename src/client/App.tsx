@@ -16,6 +16,7 @@ import {
   LoaderCircle,
   Menu,
   Moon,
+  Pencil,
   Plus,
   RotateCcw,
   SearchCheck,
@@ -120,6 +121,7 @@ const emptyProviderStatus: ProviderStatus = {
   version: "",
 };
 type OutputFile = { name: string; url: string; pages: number; lang: string };
+type DecisionState = { accepted: boolean; customText?: string };
 export type AnalysisRun = {
   event: AnalysisProgressEvent;
   startedAt: number;
@@ -167,7 +169,7 @@ export default function App() {
   const [analysis, setAnalysis] = useState<(Optimization & { score?: number }) | null>(null);
   const [workflow, setWorkflow] = useState<JobWorkflow | null>(null);
   const [applicationProfile, setApplicationProfile] = useState<Profile | null>(null);
-  const [decisions, setDecisions] = useState<Record<string, boolean>>({});
+  const [decisions, setDecisions] = useState<Record<string, DecisionState>>({});
   const [statuses, setStatuses] = useState<ProviderStatuses>({
     codex: emptyProviderStatus,
     claude: emptyProviderStatus,
@@ -357,7 +359,11 @@ export default function App() {
       setJob((current) => ({ ...current, provider }));
       setApplicationProfile(profile);
       setAnalysis(result);
-      setDecisions(Object.fromEntries(result.suggestions.map((s) => [s.id, false])));
+      setDecisions(
+        Object.fromEntries(
+          result.suggestions.map((suggestion) => [suggestion.id, { accepted: false }]),
+        ),
+      );
       setAnalysisRun(null);
       setWorkflow((current) => ({
         version: 1,
@@ -385,9 +391,9 @@ export default function App() {
   };
   const saveReview = () =>
     work("Salvando revisão...", "Revisão salva", async () => {
-      const list = Object.entries(decisions).map(([suggestionId, accepted]) => ({
+      const list = Object.entries(decisions).map(([suggestionId, decision]) => ({
         suggestionId,
-        accepted,
+        ...decision,
       }));
       await decisionSaveQueue.current;
       await api(`/api/jobs/${job.id}/decisions`, { method: "PUT", body: JSON.stringify(list) });
@@ -440,26 +446,50 @@ export default function App() {
       setProvider(saved.workflow.provider || saved.provider || "codex");
       setAnalysis(saved.analysis);
       setDecisions(
-        Object.fromEntries((saved.decisions || []).map((d) => [d.suggestionId, d.accepted])),
+        Object.fromEntries(
+          (saved.decisions || []).map((decision) => [
+            decision.suggestionId,
+            { accepted: decision.accepted, customText: decision.customText },
+          ]),
+        ),
       );
       setFiles(saved.files);
       setLangs(saved.workflow.languages);
       setStep(saved.workflow.step);
     });
-  const saveDecision = async (suggestionId: string, accepted: boolean) => {
-    const previous = decisions[suggestionId];
-    setDecisions((current) => ({ ...current, [suggestionId]: accepted }));
+  const saveDecision = async (
+    suggestionId: string,
+    accepted: boolean,
+    customText?: string | null,
+  ) => {
+    const previous = decisions[suggestionId] || { accepted: false };
+    const next: DecisionState = {
+      accepted,
+      ...(customText === undefined
+        ? previous.customText
+          ? { customText: previous.customText }
+          : {}
+        : customText
+          ? { customText }
+          : {}),
+    };
+    setDecisions((current) => ({ ...current, [suggestionId]: next }));
     try {
       const save = () =>
         api(`/api/jobs/${job.id}/decisions/${encodeURIComponent(suggestionId)}`, {
           method: "PUT",
-          body: JSON.stringify({ accepted }),
+          body: JSON.stringify({
+            accepted,
+            ...(customText !== undefined ? { customText } : {}),
+          }),
         }).then(() => undefined);
       decisionSaveQueue.current = decisionSaveQueue.current.then(save, save);
       await decisionSaveQueue.current;
+      return true;
     } catch (caught) {
       setDecisions((current) => ({ ...current, [suggestionId]: previous }));
       toast.error(caught instanceof Error ? caught.message : "Não foi possível salvar a decisão.");
+      return false;
     }
   };
   const saveLanguages = async (next: Array<"ptbr" | "en">) => {
@@ -520,7 +550,10 @@ export default function App() {
           setAnalysis(updatedAnalysis);
           setDecisions(
             Object.fromEntries(
-              updatedDecisions.map((decision) => [decision.suggestionId, decision.accepted]),
+              updatedDecisions.map((decision) => [
+                decision.suggestionId,
+                { accepted: decision.accepted, customText: decision.customText },
+              ]),
             ),
           );
         }}
@@ -1599,17 +1632,51 @@ export function ReviewStep({
   job: Job;
   profile: Profile;
   analysis: Optimization & { score?: number };
-  decisions: Record<string, boolean>;
-  setDecision?: (suggestionId: string, accepted: boolean) => void;
-  setDecisions?: (decisions: Record<string, boolean>) => void;
+  decisions: Record<string, DecisionState>;
+  setDecision?: (
+    suggestionId: string,
+    accepted: boolean,
+    customText?: string | null,
+  ) => boolean | void | Promise<boolean | void>;
+  setDecisions?: (decisions: Record<string, DecisionState>) => void;
   onGapConfirmed: (analysis: Optimization & { score?: number }, decisions: Decision[]) => void;
   next: () => void;
   busy: boolean;
 }) {
   const [selectedGap, setSelectedGap] = useState<{ gap: string; index: number } | null>(null);
-  const decide = (suggestionId: string, accepted: boolean) =>
-    setDecision?.(suggestionId, accepted) ||
-    setDecisions?.({ ...decisions, [suggestionId]: accepted });
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [draftText, setDraftText] = useState("");
+  const [savingId, setSavingId] = useState<string | null>(null);
+  const decide = async (suggestionId: string, accepted: boolean, customText?: string | null) => {
+    if (setDecision) return setDecision(suggestionId, accepted, customText);
+    const previous = decisions[suggestionId] || { accepted: false };
+    setDecisions?.({
+      ...decisions,
+      [suggestionId]: {
+        accepted,
+        ...(customText === undefined
+          ? previous.customText
+            ? { customText: previous.customText }
+            : {}
+          : customText
+            ? { customText }
+            : {}),
+      },
+    });
+    return true;
+  };
+  const persistDecision = async (
+    suggestionId: string,
+    accepted: boolean,
+    customText?: string | null,
+  ) => {
+    setSavingId(suggestionId);
+    try {
+      return await decide(suggestionId, accepted, customText);
+    } finally {
+      setSavingId((current) => (current === suggestionId ? null : current));
+    }
+  };
   const matched = analysis.requirements.filter((r) => r.matched).length;
   const score = analysis.score ?? 0;
   return (
@@ -1637,62 +1704,139 @@ export function ReviewStep({
         <div className="space-y-4">
           <h2 className="text-lg font-semibold">Sugestões do encAIxa</h2>
           {analysis.suggestions.length ? (
-            analysis.suggestions.map((suggestion) => (
-              <Card key={suggestion.id}>
-                <CardHeader className="pb-3">
-                  <div className="flex items-center justify-between">
-                    <Badge>{suggestion.type}</Badge>
-                    <span className="text-xs text-muted-foreground">{suggestion.target}</span>
-                  </div>
-                </CardHeader>
-                <CardContent className="space-y-4">
-                  {suggestion.target.endsWith(".append") ? (
-                    <div className="rounded-lg border bg-muted/40 p-3 text-sm text-muted-foreground">
-                      Novo bullet criado a partir do contexto informado por você.
+            analysis.suggestions.map((suggestion) => {
+              const decision = decisions[suggestion.id] || { accepted: false };
+              const effectiveText = decision.customText || suggestion.proposed;
+              const editing = editingId === suggestion.id;
+              return (
+                <Card key={suggestion.id}>
+                  <CardHeader className="pb-3">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <Badge>{suggestion.type}</Badge>
+                        {decision.customText && <Badge variant="secondary">Editada</Badge>}
+                      </div>
+                      <span className="text-xs text-muted-foreground">{suggestion.target}</span>
                     </div>
-                  ) : (
-                    <div className="rounded-lg border border-destructive/20 bg-destructive/5 p-3">
-                      <span className="text-[11px] font-semibold uppercase tracking-wider text-destructive">
-                        Antes
+                  </CardHeader>
+                  <CardContent className="space-y-4">
+                    {suggestion.target.endsWith(".append") ? (
+                      <div className="rounded-lg border bg-muted/40 p-3 text-sm text-muted-foreground">
+                        Novo bullet criado a partir do contexto informado por você.
+                      </div>
+                    ) : (
+                      <div className="rounded-lg border border-destructive/20 bg-destructive/5 p-3">
+                        <span className="text-[11px] font-semibold uppercase tracking-wider text-destructive">
+                          Antes
+                        </span>
+                        <p className="mt-1 text-sm text-muted-foreground line-through decoration-destructive/40">
+                          {suggestion.original || "Sem texto anterior"}
+                        </p>
+                      </div>
+                    )}
+                    <div className="rounded-lg border border-primary/20 bg-primary/5 p-3">
+                      <span className="text-[11px] font-semibold uppercase tracking-wider text-primary">
+                        {decision.customText ? "Texto editado" : "Sugestão"}
                       </span>
-                      <p className="mt-1 text-sm text-muted-foreground line-through decoration-destructive/40">
-                        {suggestion.original || "Sem texto anterior"}
+                      {editing ? (
+                        <Textarea
+                          className="mt-2 min-h-28 bg-background"
+                          aria-label={`Editar sugestão ${suggestion.id}`}
+                          value={draftText}
+                          onChange={(event) => setDraftText(event.target.value)}
+                        />
+                      ) : (
+                        <p className="mt-1 whitespace-pre-wrap text-sm">{effectiveText}</p>
+                      )}
+                    </div>
+                    <div className="text-xs leading-relaxed text-muted-foreground">
+                      <p>{suggestion.reason}</p>
+                      <p className="mt-1">
+                        <strong>Evidência:</strong> {suggestion.evidenceRefs.join("; ")}
                       </p>
                     </div>
-                  )}
-                  <div className="rounded-lg border border-primary/20 bg-primary/5 p-3">
-                    <span className="text-[11px] font-semibold uppercase tracking-wider text-primary">
-                      Sugestão
-                    </span>
-                    <p className="mt-1 text-sm">{suggestion.proposed}</p>
-                  </div>
-                  <div className="text-xs leading-relaxed text-muted-foreground">
-                    <p>{suggestion.reason}</p>
-                    <p className="mt-1">
-                      <strong>Evidência:</strong> {suggestion.evidenceRefs.join("; ")}
-                    </p>
-                  </div>
-                  <div className="flex justify-end gap-2">
-                    <Button
-                      variant={decisions[suggestion.id] === false ? "destructive" : "outline"}
-                      size="sm"
-                      onClick={() => decide(suggestion.id, false)}
-                    >
-                      <XCircle className="size-4" />
-                      Rejeitar
-                    </Button>
-                    <Button
-                      variant={decisions[suggestion.id] === true ? "default" : "outline"}
-                      size="sm"
-                      onClick={() => decide(suggestion.id, true)}
-                    >
-                      <CheckCircle2 className="size-4" />
-                      Aceitar
-                    </Button>
-                  </div>
-                </CardContent>
-              </Card>
-            ))
+                    <div className="flex flex-wrap justify-end gap-2">
+                      {editing ? (
+                        <>
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => {
+                              setEditingId(null);
+                              setDraftText("");
+                            }}
+                          >
+                            Cancelar
+                          </Button>
+                          <Button
+                            size="sm"
+                            disabled={!draftText.trim() || busy || savingId === suggestion.id}
+                            onClick={async () => {
+                              const saved = await persistDecision(
+                                suggestion.id,
+                                true,
+                                draftText.trim(),
+                              );
+                              if (saved !== false) {
+                                setEditingId(null);
+                                setDraftText("");
+                              }
+                            }}
+                          >
+                            <CheckCircle2 className="size-4" />
+                            {savingId === suggestion.id ? "Aplicando..." : "Aplicar edição"}
+                          </Button>
+                        </>
+                      ) : (
+                        <>
+                          <Button
+                            variant={decision.accepted === false ? "destructive" : "outline"}
+                            size="sm"
+                            disabled={busy || savingId === suggestion.id}
+                            onClick={() => void persistDecision(suggestion.id, false)}
+                          >
+                            <XCircle className="size-4" />
+                            Rejeitar
+                          </Button>
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            disabled={busy || savingId === suggestion.id}
+                            onClick={() => {
+                              setEditingId(suggestion.id);
+                              setDraftText(effectiveText);
+                            }}
+                          >
+                            <Pencil className="size-4" />
+                            Editar
+                          </Button>
+                          {decision.customText && (
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              disabled={busy || savingId === suggestion.id}
+                              onClick={() => void persistDecision(suggestion.id, true, null)}
+                            >
+                              <RotateCcw className="size-4" />
+                              Restaurar sugestão da IA
+                            </Button>
+                          )}
+                          <Button
+                            variant={decision.accepted === true ? "default" : "outline"}
+                            size="sm"
+                            disabled={busy || savingId === suggestion.id}
+                            onClick={() => void persistDecision(suggestion.id, true)}
+                          >
+                            <CheckCircle2 className="size-4" />
+                            Aceitar
+                          </Button>
+                        </>
+                      )}
+                    </div>
+                  </CardContent>
+                </Card>
+              );
+            })
           ) : (
             <Empty text="Nenhuma alteração foi sugerida." />
           )}

@@ -7,6 +7,7 @@ import { z } from "zod";
 import {
   profileDraftSchema,
   jobDraftSchema,
+  decisionSchema,
   type AnalysisActivityEvent,
   type AnalysisProgressEvent,
   type AnalysisStage,
@@ -580,9 +581,11 @@ app.post(
 app.put(
   "/api/jobs/:id/decisions",
   wrap(async (req: any, res: any) => {
-    const decisions = z
-      .array(z.object({ suggestionId: z.string(), accepted: z.boolean() }))
-      .parse(req.body);
+    const decisions = z.array(decisionSchema).parse(req.body);
+    const analysis = await readAnalysis(req.params.id);
+    const suggestionIds = new Set(analysis.suggestions.map((suggestion) => suggestion.id));
+    if (decisions.some((decision) => !suggestionIds.has(decision.suggestionId)))
+      throw new ProviderError("Uma das sugestões não pertence a esta candidatura.", 409);
     await saveDecisions(req.params.id, decisions);
     res.json(decisions);
   }),
@@ -590,14 +593,26 @@ app.put(
 app.put(
   "/api/jobs/:id/decisions/:suggestionId",
   wrap(async (req: any, res: any) => {
-    const accepted = z.object({ accepted: z.boolean() }).parse(req.body).accepted;
+    const input = z
+      .object({
+        accepted: z.boolean(),
+        customText: z.string().trim().min(1).max(5_000).nullable().optional(),
+      })
+      .parse(req.body);
     const analysis = await readAnalysis(req.params.id);
     if (!analysis.suggestions.some((suggestion) => suggestion.id === req.params.suggestionId))
       throw new ProviderError("Sugestão não encontrada nesta candidatura.", 409);
     const decisions = await readDecisions(req.params.id);
+    const current = decisions.find((decision) => decision.suggestionId === req.params.suggestionId);
+    const customText =
+      input.customText === undefined ? current?.customText : input.customText || undefined;
     const updated = [
       ...decisions.filter((decision) => decision.suggestionId !== req.params.suggestionId),
-      { suggestionId: req.params.suggestionId, accepted },
+      decisionSchema.parse({
+        suggestionId: req.params.suggestionId,
+        accepted: input.accepted,
+        ...(customText ? { customText } : {}),
+      }),
     ];
     await saveDecisions(req.params.id, updated);
     res.json(updated);

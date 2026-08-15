@@ -1,11 +1,13 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
+import { z } from "zod";
 import {
   profileSchema,
   profileDraftSchema,
   optimizationSchema,
   jobWorkflowSchema,
+  decisionSchema,
   type Decision,
   type Optimization,
   type Profile,
@@ -138,11 +140,16 @@ export async function readAnalysis(id: string) {
   );
 }
 export async function saveDecisions(id: string, decisions: Decision[]) {
-  await atomicJson(path.join(jobDir(id), "decisions.json"), decisions);
+  await atomicJson(
+    path.join(jobDir(id), "decisions.json"),
+    z.array(decisionSchema).parse(decisions),
+  );
 }
 export async function readDecisions(id: string): Promise<Decision[]> {
   try {
-    return JSON.parse(await fs.readFile(path.join(jobDir(id), "decisions.json"), "utf8"));
+    return z
+      .array(decisionSchema)
+      .parse(JSON.parse(await fs.readFile(path.join(jobDir(id), "decisions.json"), "utf8")));
   } catch {
     return [];
   }
