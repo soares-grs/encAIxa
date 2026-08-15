@@ -1,4 +1,4 @@
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ReviewStep } from "./App";
@@ -94,14 +94,16 @@ describe("preenchimento de lacunas", () => {
       within(dialog).getByLabelText("Onde você teve essa experiência?"),
       "0",
     );
-    await userEvent.type(
-      within(dialog).getByLabelText("O que você realmente fez?"),
-      "Implementei pipelines de CI/CD com GitHub Actions nos projetos da equipe.",
-    );
+    fireEvent.change(within(dialog).getByLabelText("O que você realmente fez?"), {
+      target: {
+        value: "Implementei pipelines de CI/CD com GitHub Actions nos projetos da equipe.",
+      },
+    });
     await userEvent.click(within(dialog).getByRole("button", { name: "Gerar prévia" }));
     const preview = await within(dialog).findByLabelText("Revise o texto antes de adicionar");
-    await userEvent.clear(preview);
-    await userEvent.type(preview, "Automatizou pipelines de CI/CD com GitHub Actions.");
+    fireEvent.change(preview, {
+      target: { value: "Automatizou pipelines de CI/CD com GitHub Actions." },
+    });
     await userEvent.click(within(dialog).getByRole("button", { name: "Adicionar ao currículo" }));
 
     await waitFor(() => expect(onGapConfirmed).toHaveBeenCalledOnce());
@@ -146,10 +148,9 @@ describe("preenchimento de lacunas", () => {
       within(dialog).getByLabelText("Onde você teve essa experiência?"),
       "0",
     );
-    await userEvent.type(
-      within(dialog).getByLabelText("O que você realmente fez?"),
-      "Trabalhei com automação durante os projetos internos da equipe.",
-    );
+    fireEvent.change(within(dialog).getByLabelText("O que você realmente fez?"), {
+      target: { value: "Trabalhei com automação durante os projetos internos da equipe." },
+    });
     await userEvent.click(within(dialog).getByRole("button", { name: "Gerar prévia" }));
 
     expect(

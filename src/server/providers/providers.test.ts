@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
+import path from "node:path";
 import {
   createClaudeStreamParser,
   parseClaudeStructuredOutput,
+  quoteClaudeShellArgument,
   resolveClaudeInvocation,
 } from "./claude.js";
 import { executeProvider, getProvider, requireReady } from "./index.js";
@@ -26,6 +28,7 @@ describe("provedores de IA", () => {
       () => true,
     );
     expect(invocation.command).toBe(process.execPath);
+    expect(invocation.shell).toBe(false);
     expect(invocation.args.at(-1)).toBe(
       '{"type":"object","properties":{"name":{"type":"string"}}}',
     );
@@ -35,7 +38,34 @@ describe("provedores de IA", () => {
     expect(resolveClaudeInvocation(["--version"], "linux", {}, () => false)).toEqual({
       command: "claude",
       args: ["--version"],
+      shell: false,
     });
+  });
+  it("detecta o instalador nativo do Claude no Windows", () => {
+    const invocation = resolveClaudeInvocation(
+      ["--version"],
+      "win32",
+      { APPDATA: "C:\\npm", USERPROFILE: "C:\\Users\\Ana" },
+      (file) => file.endsWith("claude.exe"),
+    );
+    expect(invocation).toEqual({
+      command: path.join("C:\\Users\\Ana", ".local", "bin", "claude.exe"),
+      args: ["--version"],
+      shell: false,
+    });
+  });
+  it("protege JSON e argumentos vazios ao usar o shim .cmd", () => {
+    const schema = '{"type":"object","required":["name"]}';
+    const invocation = resolveClaudeInvocation(
+      ["--json-schema", schema, "--tools", ""],
+      "win32",
+      { APPDATA: "C:\\npm", USERPROFILE: "C:\\Users\\Ana" },
+      (file) => file.endsWith("claude.cmd"),
+    );
+    expect(invocation.command).toMatch(/claude\.cmd$/);
+    expect(invocation.shell).toBe(true);
+    expect(invocation.args[1]).toBe(quoteClaudeShellArgument(schema));
+    expect(invocation.args[3]).toBe('""');
   });
   it("mantém eventos stream-json íntegros entre chunks", () => {
     const events: unknown[] = [];

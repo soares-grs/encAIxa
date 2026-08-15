@@ -21,7 +21,10 @@ import {
 } from "./prompts.js";
 import { ProviderError, type AiProvider, type ProviderActivityReporter } from "./types.js";
 
-type ClaudeInvocation = { command: string; args: string[] };
+type ClaudeInvocation = { command: string; args: string[]; shell: boolean };
+
+export const quoteClaudeShellArgument = (arg: string) =>
+  arg === "" || /[\s"{}[\]^&|<>()]/.test(arg) ? `"${arg.replace(/(\\*)"/g, '$1$1\\"')}"` : arg;
 
 export function resolveClaudeInvocation(
   args: string[],
@@ -30,17 +33,22 @@ export function resolveClaudeInvocation(
   fileExists: (file: string) => boolean = existsSync,
 ): ClaudeInvocation {
   if (platform === "win32") {
-    const npmCli = path.join(
-      env.APPDATA || "",
-      "npm",
-      "node_modules",
-      "@anthropic-ai",
-      "claude-code",
-      "cli.js",
-    );
-    if (fileExists(npmCli)) return { command: process.execPath, args: [npmCli, ...args] };
+    const npmRoot = path.join(env.APPDATA || "", "npm");
+    const npmCli = path.join(npmRoot, "node_modules", "@anthropic-ai", "claude-code", "cli.js");
+    const nativeCli = path.join(env.USERPROFILE || os.homedir(), ".local", "bin", "claude.exe");
+    const npmCommand = path.join(npmRoot, "claude.cmd");
+    if (fileExists(npmCli))
+      return { command: process.execPath, args: [npmCli, ...args], shell: false };
+    if (fileExists(nativeCli)) return { command: nativeCli, args, shell: false };
+    if (fileExists(npmCommand))
+      return { command: npmCommand, args: args.map(quoteClaudeShellArgument), shell: true };
+    return {
+      command: "claude",
+      args: args.map(quoteClaudeShellArgument),
+      shell: true,
+    };
   }
-  return { command: "claude", args };
+  return { command: "claude", args, shell: false };
 }
 
 let loginOutput = "";
@@ -56,7 +64,7 @@ export function runClaude(
     const invocation = resolveClaudeInvocation(args);
     const child = spawn(invocation.command, invocation.args, {
       windowsHide: true,
-      shell: false,
+      shell: invocation.shell,
       cwd,
     });
     let stdout = "";
@@ -138,7 +146,7 @@ function runClaudeStream(
     const invocation = resolveClaudeInvocation(args);
     const child = spawn(invocation.command, invocation.args, {
       windowsHide: true,
-      shell: false,
+      shell: invocation.shell,
       cwd,
     });
     let stderr = "";
@@ -230,6 +238,8 @@ export const claudeProvider: AiProvider = {
   async status() {
     try {
       const version = await runClaude(["--version"]);
+      if (version.code !== 0)
+        throw new Error(version.stderr.trim() || "Claude CLI não encontrado.");
       const auth = await runClaude(["auth", "status"]);
       return {
         installed: true,
@@ -256,7 +266,7 @@ export const claudeProvider: AiProvider = {
     const invocation = resolveClaudeInvocation(["auth", "login"]);
     const child = spawn(invocation.command, invocation.args, {
       windowsHide: true,
-      shell: false,
+      shell: invocation.shell,
     });
     child.stdout.on("data", (data) => (loginOutput += data.toString()));
     child.stderr.on("data", (data) => (loginOutput += data.toString()));
