@@ -112,6 +112,18 @@ export type AnalysisProgressEvent = {
   title: string;
   message: string;
 };
+export type AnalysisActivityEvent = {
+  type: "activity";
+  stage: AnalysisStage;
+  message: string;
+  timestamp: string;
+};
+export type AnalysisHeartbeatEvent = {
+  type: "heartbeat";
+  stage: AnalysisStage;
+  timestamp: string;
+  elapsedMs: number;
+};
 export type AnalysisCompleteEvent = {
   type: "complete";
   data: Optimization & { score: number };
@@ -123,4 +135,8 @@ export type AnalysisErrorEvent = {
   statusCode: number;
 };
 export type AnalysisStreamEvent =
-  AnalysisProgressEvent | AnalysisCompleteEvent | AnalysisErrorEvent;
+  | AnalysisProgressEvent
+  | AnalysisActivityEvent
+  | AnalysisHeartbeatEvent
+  | AnalysisCompleteEvent
+  | AnalysisErrorEvent;

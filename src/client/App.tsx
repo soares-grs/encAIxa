@@ -29,6 +29,7 @@ import {
   XCircle,
 } from "lucide-react";
 import type {
+  AnalysisActivityEvent,
   AnalysisProgressEvent,
   AnalysisStage,
   Decision,
@@ -94,7 +95,13 @@ const emptyProviderStatus: ProviderStatus = {
   version: "",
 };
 type OutputFile = { name: string; url: string; pages: number; lang: string };
-export type AnalysisRun = { event: AnalysisProgressEvent; startedAt: number; error?: string };
+export type AnalysisRun = {
+  event: AnalysisProgressEvent;
+  startedAt: number;
+  lastHeartbeatAt: number;
+  activities: AnalysisActivityEvent[];
+  error?: string;
+};
 const steps = [
   { label: "Perfil", icon: CircleUserRound },
   { label: "Vaga", icon: BriefcaseBusiness },
@@ -218,14 +225,56 @@ export default function App() {
       title: "Iniciando a análise",
       message: "Preparando uma sessão segura com o provedor escolhido.",
     };
-    setAnalysisRun({ event: latest, startedAt: Date.now() });
+    const startedAt = Date.now();
+    setAnalysisRun({
+      event: latest,
+      startedAt,
+      lastHeartbeatAt: startedAt,
+      activities: [
+        {
+          type: "activity",
+          stage: "preparing",
+          message: "Solicitação de análise enviada.",
+          timestamp: new Date(startedAt).toISOString(),
+        },
+      ],
+    });
     try {
       const result = await streamAnalysis(job.id, provider, (event) => {
-        latest = event;
-        setAnalysisRun((current) => ({
-          event,
-          startedAt: current?.startedAt || Date.now(),
-        }));
+        if (event.type === "progress") latest = event;
+        setAnalysisRun((current) => {
+          const base = current || {
+            event: latest,
+            startedAt,
+            lastHeartbeatAt: startedAt,
+            activities: [],
+          };
+          if (event.type === "heartbeat")
+            return { ...base, lastHeartbeatAt: Date.parse(event.timestamp) || Date.now() };
+          if (event.type === "activity") {
+            const activities = [...base.activities, event]
+              .filter(
+                (activity, index, list) =>
+                  index === 0 || activity.message !== list[index - 1].message,
+              )
+              .slice(-6);
+            return { ...base, lastHeartbeatAt: Date.now(), activities };
+          }
+          return {
+            ...base,
+            event,
+            lastHeartbeatAt: Date.now(),
+            activities: [
+              ...base.activities,
+              {
+                type: "activity" as const,
+                stage: event.stage,
+                message: event.title,
+                timestamp: new Date().toISOString(),
+              },
+            ].slice(-6),
+          };
+        });
       });
       setJob((current) => ({ ...current, provider }));
       setAnalysis(result);
@@ -237,7 +286,9 @@ export default function App() {
       const message = caught instanceof Error ? caught.message : "A análise não foi concluída.";
       setAnalysisRun((current) => ({
         event: current?.event || latest,
-        startedAt: current?.startedAt || Date.now(),
+        startedAt: current?.startedAt || startedAt,
+        lastHeartbeatAt: current?.lastHeartbeatAt || Date.now(),
+        activities: current?.activities || [],
         error: message,
       }));
       toast.error(message);
@@ -1081,14 +1132,11 @@ export function AnalysisProgressCard({
   retry: () => void;
   changeProvider: () => void;
 }) {
-  const [elapsed, setElapsed] = useState(() => Math.floor((Date.now() - run.startedAt) / 1000));
+  const [now, setNow] = useState(Date.now);
   const [tip, setTip] = useState(0);
   useEffect(() => {
     if (run.error) return;
-    const elapsedTimer = setInterval(
-      () => setElapsed(Math.floor((Date.now() - run.startedAt) / 1000)),
-      1000,
-    );
+    const elapsedTimer = setInterval(() => setNow(Date.now()), 1000);
     const tipTimer = setInterval(
       () => setTip((current) => (current + 1) % analysisTips.length),
       6000,
@@ -1098,6 +1146,8 @@ export function AnalysisProgressCard({
       clearInterval(tipTimer);
     };
   }, [run.error, run.startedAt]);
+  const elapsed = Math.floor((now - run.startedAt) / 1000);
+  const connectionSlow = !run.error && now - run.lastHeartbeatAt > 12_000;
   const activeIndex = analysisStages.findIndex((stage) => stage.id === run.event.stage);
   const time = `${String(Math.floor(elapsed / 60)).padStart(2, "0")}:${String(elapsed % 60).padStart(2, "0")}`;
   return (
@@ -1143,14 +1193,23 @@ export function AnalysisProgressCard({
             <Clock3 className="size-4" /> {time}
           </div>
         </div>
-        <Progress
-          value={run.event.progress}
-          aria-label="Progresso da análise"
-          className="mt-7 h-2.5"
-        />
-        <p className="mt-2 text-right text-[11px] text-muted-foreground">
-          Progresso baseado nas etapas concluídas
-        </p>
+        <div className="relative mt-7">
+          <Progress
+            value={run.event.progress}
+            aria-label="Progresso da análise"
+            className="h-2.5"
+          />
+          {!run.error && run.event.stage === "analyzing" && (
+            <div className="pointer-events-none absolute inset-y-0 left-[36%] w-1/4 animate-pulse rounded-full bg-primary/35 blur-[1px]" />
+          )}
+        </div>
+        <div className="mt-2 flex items-center justify-between gap-3 text-[11px] text-muted-foreground">
+          <span className={cn("flex items-center gap-1.5", connectionSlow && "text-amber-600")}>
+            {connectionSlow ? <WifiOff className="size-3" /> : <Wifi className="size-3" />}
+            {connectionSlow ? "Conexão lenta, aguardando o provedor" : "Atualizado agora"}
+          </span>
+          <span>Progresso baseado nas etapas concluídas</span>
+        </div>
         <div className="mt-7 grid gap-2 sm:grid-cols-5">
           {analysisStages.map(({ id, label, icon: Icon }, index) => {
             const completed = index < activeIndex;
@@ -1171,6 +1230,38 @@ export function AnalysisProgressCard({
             );
           })}
         </div>
+        {run.activities.length > 0 && (
+          <div className="mt-6 rounded-xl border bg-muted/25 p-4">
+            <div className="mb-3 flex items-center gap-2 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+              <History className="size-3.5" /> Atividade em tempo real
+            </div>
+            <ol className="space-y-2.5">
+              {run.activities.map((activity, index) => (
+                <li
+                  className="flex items-start gap-3 text-sm"
+                  key={`${activity.timestamp}-${index}`}
+                >
+                  <span
+                    className={cn(
+                      "mt-1.5 size-2 shrink-0 rounded-full bg-muted-foreground/35",
+                      index === run.activities.length - 1 &&
+                        !run.error &&
+                        "animate-pulse bg-primary",
+                    )}
+                  />
+                  <span className="flex-1 text-muted-foreground">{activity.message}</span>
+                  <time className="text-xs tabular-nums text-muted-foreground/70">
+                    {new Date(activity.timestamp).toLocaleTimeString("pt-BR", {
+                      hour: "2-digit",
+                      minute: "2-digit",
+                      second: "2-digit",
+                    })}
+                  </time>
+                </li>
+              ))}
+            </ol>
+          </div>
+        )}
         {!run.error && run.event.stage === "analyzing" && (
           <div className="mt-6 flex items-start gap-3 rounded-xl bg-muted/50 p-4 text-sm text-muted-foreground">
             <Sparkles className="mt-0.5 size-4 shrink-0 text-primary" />

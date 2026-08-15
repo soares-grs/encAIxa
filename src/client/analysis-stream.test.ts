@@ -27,7 +27,19 @@ describe("streamAnalysis", () => {
       title: "Analisando seu encaixe",
       message: "Comparando perfil e vaga.",
     };
-    const payload = `${JSON.stringify(progress)}\n${JSON.stringify({ type: "complete", data })}\n`;
+    const activity = {
+      type: "activity",
+      stage: "analyzing",
+      message: "Claude está estruturando a análise.",
+      timestamp: "2026-08-15T12:00:00.000Z",
+    };
+    const heartbeat = {
+      type: "heartbeat",
+      stage: "analyzing",
+      timestamp: "2026-08-15T12:00:04.000Z",
+      elapsedMs: 4_000,
+    };
+    const payload = `${JSON.stringify(progress)}\n${JSON.stringify(activity)}\n${JSON.stringify(heartbeat)}\n${JSON.stringify({ type: "complete", data })}\n`;
     vi.stubGlobal(
       "fetch",
       vi
@@ -36,11 +48,13 @@ describe("streamAnalysis", () => {
           streamResponse([payload.slice(0, 23), payload.slice(23, 71), payload.slice(71)]),
         ),
     );
-    const onProgress = vi.fn();
+    const onEvent = vi.fn();
 
-    await expect(streamAnalysis("job-1", "codex", onProgress)).resolves.toEqual(data);
-    expect(onProgress).toHaveBeenCalledOnce();
-    expect(onProgress).toHaveBeenCalledWith(progress);
+    await expect(streamAnalysis("job-1", "codex", onEvent)).resolves.toEqual(data);
+    expect(onEvent).toHaveBeenCalledTimes(3);
+    expect(onEvent).toHaveBeenNthCalledWith(1, progress);
+    expect(onEvent).toHaveBeenNthCalledWith(2, activity);
+    expect(onEvent).toHaveBeenNthCalledWith(3, heartbeat);
   });
 
   it("propaga o erro enviado durante a análise", async () => {

@@ -5,6 +5,7 @@ import fs from "node:fs/promises";
 import { z } from "zod";
 import {
   profileDraftSchema,
+  type AnalysisActivityEvent,
   type AnalysisProgressEvent,
   type AnalysisStage,
   type Decision,
@@ -180,9 +181,21 @@ app.post("/api/jobs/:id/analyze/stream", async (req: any, res: any) => {
   });
   res.flushHeaders();
   let currentStage: AnalysisStage = "preparing";
+  const startedAt = Date.now();
   const send = (event: object) => {
     if (!res.writableEnded) res.write(`${JSON.stringify(event)}\n`);
   };
+  const heartbeat = setInterval(
+    () =>
+      send({
+        type: "heartbeat",
+        stage: currentStage,
+        timestamp: new Date().toISOString(),
+        elapsedMs: Date.now() - startedAt,
+      }),
+    4_000,
+  );
+  res.once("close", () => clearInterval(heartbeat));
   try {
     const data = await analyzeJob(req.params.id, req.body?.provider, (event) => {
       currentStage = event.stage;
@@ -203,6 +216,7 @@ app.post("/api/jobs/:id/analyze/stream", async (req: any, res: any) => {
         error instanceof ProviderError ? error.statusCode : error instanceof z.ZodError ? 400 : 500,
     });
   } finally {
+    clearInterval(heartbeat);
     res.end();
   }
 });
@@ -273,7 +287,7 @@ app.get(
 async function analyzeJob(
   id: string,
   requestedProvider: unknown,
-  report: (event: AnalysisProgressEvent) => void = () => {},
+  report: (event: AnalysisProgressEvent | AnalysisActivityEvent) => void = () => {},
 ) {
   report({
     type: "progress",
@@ -303,7 +317,26 @@ async function analyzeJob(
     title: `${provider.label} está analisando a vaga`,
     message: "Comparando requisitos com evidências reais da sua trajetória.",
   });
-  const analysis = await executeProvider(() => provider.optimize(profile, job));
+  const activityMessages = {
+    session_started: `Sessão segura do ${provider.label} iniciada.`,
+    response_in_progress: `${provider.label} está estruturando a análise.`,
+    response_refined: `${provider.label} está refinando a resposta.`,
+    result_received: `Resposta do ${provider.label} recebida.`,
+  } as const;
+  let lastActivity = "";
+  const analysis = await executeProvider(() =>
+    provider.optimize(profile, job, (activity) => {
+      const message = activityMessages[activity];
+      if (message === lastActivity) return;
+      lastActivity = message;
+      report({
+        type: "activity",
+        stage: "analyzing",
+        message,
+        timestamp: new Date().toISOString(),
+      });
+    }),
+  );
   report({
     type: "progress",
     stage: "processing_result",

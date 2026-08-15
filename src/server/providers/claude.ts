@@ -12,15 +12,30 @@ import {
 import optimizationJsonSchema from "../../../schemas/optimization.schema.json" with { type: "json" };
 import profileJsonSchema from "../../../schemas/profile.schema.json" with { type: "json" };
 import { optimizationPrompt, profileExtractionPrompt, translationPrompt } from "./prompts.js";
-import { ProviderError, type AiProvider } from "./types.js";
+import { ProviderError, type AiProvider, type ProviderActivityReporter } from "./types.js";
 
-const windowsClaude = path.join(process.env.APPDATA || "", "npm", "claude.cmd");
-const command =
-  process.platform === "win32" && existsSync(windowsClaude)
-    ? windowsClaude
-    : process.platform === "win32"
-      ? "claude.cmd"
-      : "claude";
+type ClaudeInvocation = { command: string; args: string[] };
+
+export function resolveClaudeInvocation(
+  args: string[],
+  platform = process.platform,
+  env: NodeJS.ProcessEnv = process.env,
+  fileExists: (file: string) => boolean = existsSync,
+): ClaudeInvocation {
+  if (platform === "win32") {
+    const npmCli = path.join(
+      env.APPDATA || "",
+      "npm",
+      "node_modules",
+      "@anthropic-ai",
+      "claude-code",
+      "cli.js",
+    );
+    if (fileExists(npmCli)) return { command: process.execPath, args: [npmCli, ...args] };
+  }
+  return { command: "claude", args };
+}
+
 let loginOutput = "";
 let loginRunning = false;
 
@@ -31,9 +46,10 @@ export function runClaude(
   cwd?: string,
 ): Promise<{ code: number; stdout: string; stderr: string }> {
   return new Promise((resolve, reject) => {
-    const child = spawn(command, args, {
+    const invocation = resolveClaudeInvocation(args);
+    const child = spawn(invocation.command, invocation.args, {
       windowsHide: true,
-      shell: process.platform === "win32",
+      shell: false,
       cwd,
     });
     let stdout = "";
@@ -56,10 +72,15 @@ export function runClaude(
   });
 }
 
-export function parseClaudeStructuredOutput(value: string): unknown {
+export function parseClaudeStructuredOutput(value: string | object): unknown {
   try {
-    const envelope = JSON.parse(value);
-    if (envelope.is_error) throw new Error(envelope.result || "O Claude retornou um erro.");
+    const envelope: any = typeof value === "string" ? JSON.parse(value) : value;
+    if (envelope.is_error || (envelope.subtype && envelope.subtype !== "success"))
+      throw new Error(
+        envelope.errors?.map((error: any) => error.message || String(error)).join("; ") ||
+          envelope.result ||
+          "O Claude retornou um erro.",
+      );
     if (envelope.structured_output === undefined)
       throw new Error("O Claude não retornou uma resposta estruturada.");
     return envelope.structured_output;
@@ -72,14 +93,91 @@ export function parseClaudeStructuredOutput(value: string): unknown {
   }
 }
 
-async function structured(prompt: string, schema: object) {
+export function createClaudeStreamParser(onEvent: (event: any) => void): {
+  push(chunk: string): void;
+  finish(): void;
+} {
+  let buffer = "";
+  const consume = (line: string) => {
+    if (!line.trim()) return;
+    try {
+      onEvent(JSON.parse(line));
+    } catch {
+      throw new ProviderError("O Claude retornou um evento de streaming inválido.", 502);
+    }
+  };
+  return {
+    push(chunk) {
+      buffer += chunk;
+      const lines = buffer.split("\n");
+      buffer = lines.pop() || "";
+      lines.forEach(consume);
+    },
+    finish() {
+      if (buffer.trim()) consume(buffer);
+      buffer = "";
+    },
+  };
+}
+
+function runClaudeStream(
+  args: string[],
+  input: string,
+  timeout: number,
+  cwd: string,
+  onEvent: (event: any) => void,
+): Promise<{ code: number; stderr: string }> {
+  return new Promise((resolve, reject) => {
+    const invocation = resolveClaudeInvocation(args);
+    const child = spawn(invocation.command, invocation.args, {
+      windowsHide: true,
+      shell: false,
+      cwd,
+    });
+    let stderr = "";
+    const parser = createClaudeStreamParser(onEvent);
+    const timer = setTimeout(() => {
+      child.kill();
+      reject(new ProviderError("O Claude excedeu o tempo limite.", 504));
+    }, timeout);
+    child.stdout.on("data", (data) => {
+      try {
+        parser.push(data.toString());
+      } catch (error) {
+        clearTimeout(timer);
+        child.kill();
+        reject(error);
+      }
+    });
+    child.stderr.on("data", (data) => (stderr += data));
+    child.on("error", (error) => {
+      clearTimeout(timer);
+      reject(error);
+    });
+    child.on("close", (code) => {
+      clearTimeout(timer);
+      try {
+        parser.finish();
+        resolve({ code: code ?? 1, stderr });
+      } catch (error) {
+        reject(error);
+      }
+    });
+    child.stdin.end(input);
+  });
+}
+
+async function structured(prompt: string, schema: object, report?: ProviderActivityReporter) {
   const temp = await fs.mkdtemp(path.join(os.tmpdir(), "encaixa-claude-"));
   try {
-    const response = await runClaude(
+    let resultEvent: any;
+    let assistantEvents = 0;
+    const response = await runClaudeStream(
       [
         "-p",
         "--output-format",
-        "json",
+        "stream-json",
+        "--verbose",
         "--json-schema",
         JSON.stringify(schema),
         "--no-session-persistence",
@@ -94,13 +192,26 @@ async function structured(prompt: string, schema: object) {
       prompt,
       180_000,
       temp,
+      (event) => {
+        if (event.type === "system" && event.subtype === "init") report?.("session_started");
+        if (event.type === "assistant") {
+          assistantEvents += 1;
+          report?.(assistantEvents === 1 ? "response_in_progress" : "response_refined");
+        }
+        if (event.type === "result") {
+          resultEvent = event;
+          report?.("result_received");
+        }
+      },
     );
     if (response.code !== 0)
       throw new ProviderError(
-        response.stderr.trim() || "O Claude não conseguiu concluir a operação.",
+        response.stderr.trim().replace(/^Error:\s*/i, "") ||
+          "O Claude não conseguiu concluir a operação.",
         502,
       );
-    return parseClaudeStructuredOutput(response.stdout);
+    if (!resultEvent) throw new ProviderError("O Claude terminou sem enviar um resultado.", 502);
+    return parseClaudeStructuredOutput(resultEvent);
   } finally {
     await fs.rm(temp, { recursive: true, force: true });
   }
@@ -135,9 +246,10 @@ export const claudeProvider: AiProvider = {
     if (loginRunning) return;
     loginRunning = true;
     loginOutput = "Iniciando autenticação do Claude...\n";
-    const child = spawn(command, ["auth", "login"], {
+    const invocation = resolveClaudeInvocation(["auth", "login"]);
+    const child = spawn(invocation.command, invocation.args, {
       windowsHide: true,
-      shell: process.platform === "win32",
+      shell: false,
     });
     child.stdout.on("data", (data) => (loginOutput += data.toString()));
     child.stderr.on("data", (data) => (loginOutput += data.toString()));
@@ -150,9 +262,9 @@ export const claudeProvider: AiProvider = {
       loginRunning = false;
     });
   },
-  async optimize(profile, job) {
+  async optimize(profile, job, report) {
     return optimizationSchema.parse(
-      await structured(optimizationPrompt(profile, job), optimizationJsonSchema),
+      await structured(optimizationPrompt(profile, job), optimizationJsonSchema, report),
     );
   },
   async translateProfile(profile: Profile) {

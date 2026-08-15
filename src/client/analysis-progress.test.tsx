@@ -13,6 +13,15 @@ const job = {
 function run(error?: string): AnalysisRun {
   return {
     startedAt: Date.now() - 4_000,
+    lastHeartbeatAt: Date.now(),
+    activities: [
+      {
+        type: "activity",
+        stage: "analyzing",
+        message: "Claude está estruturando a análise.",
+        timestamp: new Date().toISOString(),
+      },
+    ],
     error,
     event: {
       type: "progress",
@@ -43,6 +52,8 @@ describe("AnalysisProgressCard", () => {
       "36",
     );
     expect(screen.getByText(/cruzando suas experiências/)).toBeInTheDocument();
+    expect(screen.getByText("Atividade em tempo real")).toBeInTheDocument();
+    expect(screen.getByText("Claude está estruturando a análise.")).toBeInTheDocument();
   });
 
   it("oferece recuperação quando a análise falha", async () => {
@@ -63,5 +74,21 @@ describe("AnalysisProgressCard", () => {
     await userEvent.click(screen.getByRole("button", { name: /Trocar provedor/ }));
     expect(retry).toHaveBeenCalledOnce();
     expect(changeProvider).toHaveBeenCalledOnce();
+  });
+
+  it("avisa quando os heartbeats do servidor ficam atrasados", () => {
+    const staleRun = run();
+    staleRun.lastHeartbeatAt = Date.now() - 13_000;
+    render(
+      <AnalysisProgressCard
+        run={staleRun}
+        provider="Claude"
+        job={job}
+        retry={vi.fn()}
+        changeProvider={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByText("Conexão lenta, aguardando o provedor")).toBeInTheDocument();
   });
 });

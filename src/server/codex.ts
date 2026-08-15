@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { existsSync } from "node:fs";
 import { optimizationSchema, profileDraftSchema, type Profile } from "../shared/schemas.js";
-import { ProviderError } from "./providers/types.js";
+import { ProviderError, type ProviderActivityReporter } from "./providers/types.js";
 import {
   optimizationPrompt,
   profileExtractionPrompt,
@@ -81,6 +81,7 @@ export function startLogin() {
 export async function optimize(
   profile: Profile,
   job: { company: string; role: string; text: string },
+  report?: ProviderActivityReporter,
 ) {
   const temp = await fs.mkdtemp(path.join(os.tmpdir(), "encaixa-codex-"));
   const resultPath = path.join(temp, "result.json");
@@ -103,9 +104,12 @@ export async function optimize(
       resultPath,
       "-",
     ];
+    report?.("session_started");
+    report?.("response_in_progress");
     const response = await run(args, prompt, 180_000);
     if (response.code !== 0)
       throw new Error(response.stderr.trim() || "O Codex não conseguiu concluir a análise.");
+    report?.("result_received");
     return optimizationSchema.parse(JSON.parse(await fs.readFile(resultPath, "utf8")));
   } finally {
     await fs.rm(temp, { recursive: true, force: true });

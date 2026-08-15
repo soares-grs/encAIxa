@@ -9,6 +9,9 @@ export type ProviderStatus = {
   loginOutput: string;
   error?: string;
 };
+export type ProviderActivity =
+  "session_started" | "response_in_progress" | "response_refined" | "result_received";
+export type ProviderActivityReporter = (activity: ProviderActivity) => void;
 
 export interface AiProvider {
   id: ProviderId;
@@ -18,6 +21,7 @@ export interface AiProvider {
   optimize(
     profile: Profile,
     job: { company: string; role: string; text: string },
+    report?: ProviderActivityReporter,
   ): Promise<Optimization>;
   translateProfile(profile: Profile): Promise<Profile>;
   extractProfile(resumeText: string): Promise<ProfileDraft>;

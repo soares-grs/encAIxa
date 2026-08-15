@@ -1,8 +1,4 @@
-import type {
-  AnalysisCompleteEvent,
-  AnalysisProgressEvent,
-  AnalysisStreamEvent,
-} from "../shared/schemas";
+import type { AnalysisCompleteEvent, AnalysisStreamEvent } from "../shared/schemas";
 
 export class AnalysisStreamError extends Error {
   constructor(
@@ -16,7 +12,7 @@ export class AnalysisStreamError extends Error {
 export async function streamAnalysis(
   jobId: string,
   provider: "codex" | "claude",
-  onProgress: (event: AnalysisProgressEvent) => void,
+  onEvent: (event: Exclude<AnalysisStreamEvent, AnalysisCompleteEvent | { type: "error" }>) => void,
 ): Promise<AnalysisCompleteEvent["data"]> {
   const response = await fetch(`/api/jobs/${jobId}/analyze/stream`, {
     method: "POST",
@@ -42,7 +38,8 @@ export async function streamAnalysis(
     } catch {
       throw new AnalysisStreamError("O servidor enviou um evento de análise inválido.", 502);
     }
-    if (event.type === "progress") onProgress(event);
+    if (event.type === "progress" || event.type === "activity" || event.type === "heartbeat")
+      onEvent(event);
     if (event.type === "error") throw new AnalysisStreamError(event.message, event.statusCode);
     if (event.type === "complete") completed = event.data;
   };
