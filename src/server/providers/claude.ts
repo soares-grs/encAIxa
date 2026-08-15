@@ -3,10 +3,15 @@ import { existsSync } from "node:fs";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { optimizationSchema, profileSchema, type Profile } from "../../shared/schemas.js";
+import {
+  optimizationSchema,
+  profileDraftSchema,
+  profileSchema,
+  type Profile,
+} from "../../shared/schemas.js";
 import optimizationJsonSchema from "../../../schemas/optimization.schema.json" with { type: "json" };
 import profileJsonSchema from "../../../schemas/profile.schema.json" with { type: "json" };
-import { optimizationPrompt, translationPrompt } from "./prompts.js";
+import { optimizationPrompt, profileExtractionPrompt, translationPrompt } from "./prompts.js";
 import { ProviderError, type AiProvider } from "./types.js";
 
 const windowsClaude = path.join(process.env.APPDATA || "", "npm", "claude.cmd");
@@ -152,5 +157,10 @@ export const claudeProvider: AiProvider = {
   },
   async translateProfile(profile: Profile) {
     return profileSchema.parse(await structured(translationPrompt(profile), profileJsonSchema));
+  },
+  async extractProfile(resumeText: string) {
+    return profileDraftSchema.parse(
+      await structured(profileExtractionPrompt(resumeText), profileJsonSchema),
+    );
   },
 };

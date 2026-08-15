@@ -51,6 +51,8 @@ import {
 } from "@/components/ui";
 import { cn } from "@/lib/utils";
 import { useTheme } from "@/theme";
+import { api } from "@/api";
+import Onboarding, { type OnboardingState } from "@/Onboarding";
 
 type Job = {
   id: string;
@@ -113,16 +115,6 @@ const emptyProfile: Profile = {
   languages: [],
 };
 
-async function api<T>(url: string, options: RequestInit = {}): Promise<T> {
-  const response = await fetch(url, {
-    headers: options.body instanceof FormData ? undefined : { "Content-Type": "application/json" },
-    ...options,
-  });
-  const data = await response.json().catch(() => ({}));
-  if (!response.ok) throw new Error(data.error || "Não foi possível concluir a operação.");
-  return data;
-}
-
 export default function App() {
   const [step, setStep] = useState(0);
   const [profile, setProfile] = useState<Profile>(emptyProfile);
@@ -139,18 +131,25 @@ export default function App() {
   const [error, setError] = useState("");
   const [files, setFiles] = useState<OutputFile[]>([]);
   const [langs, setLangs] = useState<string[]>(["ptbr"]);
+  const [onboarding, setOnboarding] = useState<OnboardingState | null>(null);
+  const [bootstrapped, setBootstrapped] = useState(false);
   const load = () =>
     Promise.all([
-      api<Profile>("/api/profile"),
+      api<OnboardingState>("/api/onboarding"),
       api<ProviderStatuses>("/api/providers/status"),
       api<Job[]>("/api/jobs"),
     ])
-      .then(([p, s, h]) => {
-        setProfile(p);
+      .then(async ([onboardingState, s, h]) => {
+        setOnboarding(onboardingState);
         setStatuses(s);
         setHistory(h);
+        if (onboardingState.completed) setProfile(await api<Profile>("/api/profile"));
+        setBootstrapped(true);
       })
-      .catch((e) => setError(e.message));
+      .catch((e) => {
+        setError(e.message);
+        setBootstrapped(true);
+      });
   useEffect(() => {
     void load();
   }, []);
@@ -272,6 +271,27 @@ export default function App() {
         generate={generate}
         files={files}
         busy={!!busy}
+      />
+    );
+  if (!bootstrapped)
+    return (
+      <div className="grid min-h-screen place-items-center">
+        <LoaderCircle className="size-7 animate-spin text-primary" />
+      </div>
+    );
+  if (onboarding && !onboarding.completed)
+    return (
+      <Onboarding
+        initial={onboarding}
+        statuses={statuses}
+        refreshStatuses={async () =>
+          setStatuses(await api<ProviderStatuses>("/api/providers/status"))
+        }
+        onComplete={(completedProfile) => {
+          setProfile(completedProfile);
+          setOnboarding({ ...onboarding, completed: true });
+          setStep(1);
+        }}
       />
     );
   return (

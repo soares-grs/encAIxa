@@ -47,7 +47,7 @@ src/shared/     schemas e tipos compartilhados
 storage/        perfil, vagas e PDFs reais (ignorado pelo Git)
 ```
 
-Quando `storage/profile.json` não existe, a aplicação cria uma cópia local de `examples/profile.example.json`.
+Quando `storage/profile.json` não existe, a aplicação abre um onboarding para preencher o perfil ou importar PDF, DOCX, TXT, Markdown ou JSON. O progresso fica salvo localmente e pode ser retomado depois.
 
 ## Privacidade e segurança
 

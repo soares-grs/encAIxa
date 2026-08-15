@@ -2,16 +2,19 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import {
   profileSchema,
+  profileDraftSchema,
   optimizationSchema,
   type Decision,
   type Optimization,
   type Profile,
+  type ProfileDraft,
 } from "../shared/schemas.js";
 
 const root = process.cwd();
 export const paths = {
   root,
   profile: path.join(root, "storage", "profile.json"),
+  onboarding: path.join(root, "storage", "onboarding.json"),
   jobs: path.join(root, "storage", "jobs"),
   output: path.join(root, "storage", "output"),
   exampleProfile: path.join(root, "examples", "profile.example.json"),
@@ -34,11 +37,75 @@ async function ensureStorage() {
   await fs.mkdir(path.dirname(paths.profile), { recursive: true });
   await fs.mkdir(paths.jobs, { recursive: true });
   await fs.mkdir(paths.output, { recursive: true });
+}
+const emptyDraft = (): ProfileDraft =>
+  profileDraftSchema.parse({ contact: {}, experience: [], education: [], languages: [] });
+async function atomicJson(file: string, value: unknown) {
+  await fs.mkdir(path.dirname(file), { recursive: true });
+  const temp = `${file}.${process.pid}.tmp`;
+  await fs.writeFile(temp, JSON.stringify(value, null, 2) + "\n", "utf8");
+  await fs.rename(temp, file);
+}
+async function profileMatchesExample() {
   try {
-    await fs.access(paths.profile);
+    const [profile, example] = await Promise.all([
+      fs.readFile(paths.profile, "utf8"),
+      fs.readFile(paths.exampleProfile, "utf8"),
+    ]);
+    return JSON.stringify(JSON.parse(profile)) === JSON.stringify(JSON.parse(example));
   } catch {
-    await fs.copyFile(paths.exampleProfile, paths.profile);
+    return false;
   }
+}
+export async function readOnboarding() {
+  await ensureStorage();
+  let saved: any = {};
+  try {
+    saved = JSON.parse(await fs.readFile(paths.onboarding, "utf8"));
+  } catch {}
+  let hasValidProfile = false;
+  try {
+    profileSchema.parse(JSON.parse(await fs.readFile(paths.profile, "utf8")));
+    hasValidProfile = !(await profileMatchesExample());
+  } catch {}
+  return {
+    completed: Boolean(saved.completedAt) || hasValidProfile,
+    version: 1,
+    mode: saved.mode === "import" ? "import" : saved.mode === "manual" ? "manual" : null,
+    step: Number.isInteger(saved.step) ? Math.max(0, Math.min(4, saved.step)) : 0,
+    provider: saved.provider === "claude" ? "claude" : "codex",
+    profile: profileDraftSchema.parse(saved.profile || emptyDraft()),
+    updatedAt: saved.updatedAt || null,
+    completedAt: saved.completedAt || null,
+  };
+}
+export async function saveOnboardingDraft(value: {
+  mode: "manual" | "import";
+  step: number;
+  provider?: "codex" | "claude";
+  profile: unknown;
+}) {
+  const current = await readOnboarding();
+  if (current.completed) throw new Error("O perfil já está configurado.");
+  const saved = {
+    version: 1,
+    mode: value.mode,
+    step: Math.max(0, Math.min(4, Math.trunc(value.step))),
+    provider: value.provider === "claude" ? "claude" : "codex",
+    profile: profileDraftSchema.parse(value.profile),
+    updatedAt: new Date().toISOString(),
+  };
+  await atomicJson(paths.onboarding, saved);
+  return saved;
+}
+export async function completeOnboarding(value: unknown) {
+  const profile = profileSchema.parse(value);
+  await atomicJson(paths.profile, profile);
+  await atomicJson(paths.onboarding, {
+    version: 1,
+    completedAt: new Date().toISOString(),
+  });
+  return profile;
 }
 export async function readProfile(): Promise<Profile> {
   await ensureStorage();
@@ -47,7 +114,7 @@ export async function readProfile(): Promise<Profile> {
 export async function writeProfile(profile: unknown) {
   const parsed = profileSchema.parse(profile);
   await ensureStorage();
-  await fs.writeFile(paths.profile, JSON.stringify(parsed, null, 2) + "\n", "utf8");
+  await atomicJson(paths.profile, parsed);
   return parsed;
 }
 export async function saveJob(id: string, value: object) {

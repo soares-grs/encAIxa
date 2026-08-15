@@ -1,4 +1,4 @@
-import type { Optimization, Profile } from "../../shared/schemas.js";
+import type { Optimization, Profile, ProfileDraft } from "../../shared/schemas.js";
 
 export type ProviderId = "codex" | "claude";
 export type ProviderStatus = {
@@ -20,6 +20,7 @@ export interface AiProvider {
     job: { company: string; role: string; text: string },
   ): Promise<Optimization>;
   translateProfile(profile: Profile): Promise<Profile>;
+  extractProfile(resumeText: string): Promise<ProfileDraft>;
 }
 
 export class ProviderError extends Error {

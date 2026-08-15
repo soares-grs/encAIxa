@@ -3,7 +3,7 @@ import multer from "multer";
 import path from "node:path";
 import fs from "node:fs/promises";
 import { z } from "zod";
-import type { Decision } from "../shared/schemas.js";
+import { profileDraftSchema, type Decision } from "../shared/schemas.js";
 import { codexStatus, startLogin } from "./codex.js";
 import {
   getProvider,
@@ -22,13 +22,16 @@ import {
   makeJobId,
   paths,
   readAnalysis,
+  readOnboarding,
   readDecisions,
   readJob,
   readProfile,
   saveAnalysis,
+  saveOnboardingDraft,
   saveDecisions,
   saveJob,
   writeProfile,
+  completeOnboarding,
 } from "./storage.js";
 
 const app = express();
@@ -65,6 +68,52 @@ app.post(
     provider.startLogin();
     res.status(202).json({ ok: true });
   }),
+);
+app.get(
+  "/api/onboarding",
+  wrap(async (_req: any, res: any) => res.json(await readOnboarding())),
+);
+app.put(
+  "/api/onboarding/draft",
+  wrap(async (req: any, res: any) => {
+    const body = z
+      .object({
+        mode: z.enum(["manual", "import"]),
+        step: z.number().int().min(0).max(4),
+        provider: z.enum(["codex", "claude"]).optional(),
+        profile: profileDraftSchema,
+      })
+      .parse(req.body);
+    res.json(await saveOnboardingDraft(body));
+  }),
+);
+app.post(
+  "/api/onboarding/import",
+  upload.single("file"),
+  wrap(async (req: any, res: any) => {
+    if (!req.file) throw new ProviderError("Selecione um arquivo para importar.", 400);
+    const extension = path.extname(req.file.originalname).toLowerCase();
+    let profile;
+    let providerId: ProviderId = "codex";
+    if (extension === ".json") {
+      try {
+        profile = profileDraftSchema.parse(JSON.parse(req.file.buffer.toString("utf8")));
+      } catch {
+        throw new ProviderError("O arquivo JSON não contém um perfil válido.", 400);
+      }
+    } else {
+      providerId = isProviderId(req.body.provider) ? req.body.provider : "codex";
+      const provider = await requireReady(getProvider(providerId));
+      const text = await extractText(req.file);
+      profile = await executeProvider(() => provider.extractProfile(text));
+    }
+    await saveOnboardingDraft({ mode: "import", step: 4, provider: providerId, profile });
+    res.json({ profile, provider: providerId });
+  }),
+);
+app.post(
+  "/api/onboarding/complete",
+  wrap(async (req: any, res: any) => res.json(await completeOnboarding(req.body.profile))),
 );
 app.get(
   "/api/profile",

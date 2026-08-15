@@ -33,6 +33,47 @@ export const profileSchema = z.object({
   ),
   languages: z.array(z.object({ language: z.string(), level: z.string() })),
 });
+export const profileDraftSchema = z.object({
+  name: z.string().default(""),
+  title: z.string().default(""),
+  subtitle: z.string().default(""),
+  contact: z
+    .object({
+      email: z.string().default(""),
+      phone: z.string().default(""),
+      linkedin: z.string().default(""),
+      github: z.string().default(""),
+      location: z.string().default(""),
+    })
+    .default({}),
+  summary: z.string().default(""),
+  skills: z.array(z.string()).default([]),
+  experience: z
+    .array(
+      z.object({
+        title: z.string().default(""),
+        company: z.string().default(""),
+        period: z.string().default(""),
+        location: z.string().optional(),
+        bullets: z.array(z.string()).default([]),
+        skills: z.array(z.string()).optional(),
+      }),
+    )
+    .default([]),
+  education: z
+    .array(
+      z.object({
+        degree: z.string().default(""),
+        institution: z.string().default(""),
+        period: z.string().default(""),
+        status: z.string().default(""),
+      }),
+    )
+    .default([]),
+  languages: z
+    .array(z.object({ language: z.string().default(""), level: z.string().default("") }))
+    .default([]),
+});
 export const requirementSchema = z.object({
   id: z.string(),
   text: z.string(),
@@ -58,6 +99,7 @@ export const optimizationSchema = z.object({
   suggestions: z.array(suggestionSchema),
 });
 export type Profile = z.infer<typeof profileSchema>;
+export type ProfileDraft = z.infer<typeof profileDraftSchema>;
 export type Optimization = z.infer<typeof optimizationSchema>;
 export type Suggestion = z.infer<typeof suggestionSchema>;
 export type Decision = { suggestionId: string; accepted: boolean };

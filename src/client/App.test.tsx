@@ -23,31 +23,42 @@ beforeEach(() => {
       const data =
         url === "/api/profile"
           ? profile
-          : url === "/api/providers/status"
+          : url === "/api/onboarding"
             ? {
-                codex: {
-                  installed: true,
-                  authenticated: true,
-                  version: "1.0",
-                  loginRunning: false,
-                  loginOutput: "",
-                },
-                claude: {
-                  installed: true,
-                  authenticated: false,
-                  version: "2.0",
-                  loginRunning: false,
-                  loginOutput: "",
-                },
+                completed: true,
+                version: 1,
+                mode: null,
+                step: 0,
+                provider: "codex",
+                profile,
+                updatedAt: null,
+                completedAt: "2026-01-01",
               }
-            : url === "/api/jobs" && options?.method === "POST"
+            : url === "/api/providers/status"
               ? {
-                  id: "job-1",
-                  company: "Acme",
-                  role: "Dev",
-                  text: "Descrição completa para a vaga",
+                  codex: {
+                    installed: true,
+                    authenticated: true,
+                    version: "1.0",
+                    loginRunning: false,
+                    loginOutput: "",
+                  },
+                  claude: {
+                    installed: true,
+                    authenticated: false,
+                    version: "2.0",
+                    loginRunning: false,
+                    loginOutput: "",
+                  },
                 }
-              : [];
+              : url === "/api/jobs" && options?.method === "POST"
+                ? {
+                    id: "job-1",
+                    company: "Acme",
+                    role: "Dev",
+                    text: "Descrição completa para a vaga",
+                  }
+                : [];
       return Promise.resolve(
         new Response(JSON.stringify(data), {
           status: 200,

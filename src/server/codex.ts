@@ -3,9 +3,13 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { existsSync } from "node:fs";
-import { optimizationSchema, type Profile } from "../shared/schemas.js";
+import { optimizationSchema, profileDraftSchema, type Profile } from "../shared/schemas.js";
 import { ProviderError } from "./providers/types.js";
-import { optimizationPrompt, translationPrompt } from "./providers/prompts.js";
+import {
+  optimizationPrompt,
+  profileExtractionPrompt,
+  translationPrompt,
+} from "./providers/prompts.js";
 
 const windowsCodex = path.join(process.env.APPDATA || "", "npm", "codex.cmd");
 const command =
@@ -137,6 +141,37 @@ export async function translateProfile(profile: Profile) {
     return (await import("../shared/schemas.js")).profileSchema.parse(
       JSON.parse(await fs.readFile(resultPath, "utf8")),
     );
+  } finally {
+    await fs.rm(temp, { recursive: true, force: true });
+  }
+}
+export async function extractProfile(resumeText: string) {
+  const temp = await fs.mkdtemp(path.join(os.tmpdir(), "encaixa-profile-import-"));
+  const resultPath = path.join(temp, "result.json");
+  try {
+    const response = await run(
+      [
+        "exec",
+        "--ephemeral",
+        "--ignore-user-config",
+        "--ignore-rules",
+        "--sandbox",
+        "read-only",
+        "--skip-git-repo-check",
+        "-C",
+        temp,
+        "--output-schema",
+        path.resolve("schemas", "profile.schema.json"),
+        "--output-last-message",
+        resultPath,
+        "-",
+      ],
+      profileExtractionPrompt(resumeText),
+      180_000,
+    );
+    if (response.code !== 0)
+      throw new Error(response.stderr.trim() || "Não foi possível importar o currículo.");
+    return profileDraftSchema.parse(JSON.parse(await fs.readFile(resultPath, "utf8")));
   } finally {
     await fs.rm(temp, { recursive: true, force: true });
   }
