@@ -128,7 +128,7 @@ Perfil → Vaga → Análise → Revisão → Gerar
 ```
 
 1. **Perfil:** revise seu histórico profissional reutilizável.
-2. **Vaga:** cole o link de uma página pública para preencher empresa, cargo e descrição com Codex ou Claude; revise os dados antes de salvar. Você também pode importar um arquivo ou preencher manualmente.
+2. **Vaga:** cole o link de uma página pública para preencher empresa, cargo e descrição com Codex ou Claude; revise os dados antes de salvar. Se necessário, complete os campos manualmente.
 3. **Análise:** escolha Codex ou Claude e acompanhe as atividades em tempo real.
 4. **Revisão:** aceite ou rejeite cada sugestão. Nas lacunas, use **Adicionar ao currículo** somente quando puder fornecer uma experiência real relacionada.
 5. **Gerar:** selecione os idiomas, confira a prévia e baixe os PDFs.

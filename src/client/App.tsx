@@ -24,7 +24,6 @@ import {
   Sun,
   ShieldCheck,
   Trash2,
-  Upload,
   Wifi,
   WifiOff,
   XCircle,
@@ -232,13 +231,6 @@ export default function App() {
     work("Salvando perfil...", "Perfil salvo", async () => {
       await api("/api/profile", { method: "PUT", body: JSON.stringify(profile) });
       setStep(1);
-    });
-  const importFile = (file: File) =>
-    work("Extraindo arquivo...", "Descrição importada", async () => {
-      const form = new FormData();
-      form.append("file", file);
-      const data = await api<{ text: string }>("/api/import", { method: "POST", body: form });
-      setJob((j) => ({ ...j, text: data.text }));
     });
   const importJobUrl = () =>
     work("Capturando vaga...", "Dados da vaga capturados", async () => {
@@ -496,7 +488,6 @@ export default function App() {
       <JobStep
         job={job}
         setJob={setJob}
-        onFile={importFile}
         onImportUrl={importJobUrl}
         onSave={saveJob}
         busy={!!busy}
@@ -1092,7 +1083,6 @@ function ProfileStep({
 function JobStep({
   job,
   setJob,
-  onFile,
   onImportUrl,
   onSave,
   busy,
@@ -1104,7 +1094,6 @@ function JobStep({
 }: {
   job: Job;
   setJob: (job: Job) => void;
-  onFile: (file: File) => void;
   onImportUrl: () => void;
   onSave: () => void;
   busy: boolean;
@@ -1116,123 +1105,159 @@ function JobStep({
 }) {
   const selected = statuses[provider];
   return (
-    <Card>
+    <Card className="overflow-hidden">
       <CardHeader>
         <SectionTitle
           icon={BriefcaseBusiness}
-          title="Dados da oportunidade"
-          description="Cole o link e deixe a IA preencher os dados, ou use uma das opções manuais."
+          title="Importe a vaga pelo link"
+          description="A IA lê a página pública e organiza os dados da oportunidade para você revisar."
         />
       </CardHeader>
-      <CardContent className="space-y-6">
-        <div className="space-y-4 rounded-xl border bg-muted/20 p-5">
-          <div>
-            <div className="flex items-center gap-2 font-semibold">
-              <Link2 className="size-4 text-primary" />
-              Capturar pelo link da vaga
-            </div>
-            <p className="mt-1 text-sm text-muted-foreground">
-              Funciona com páginas públicas. Você poderá revisar tudo antes de salvar.
-            </p>
-          </div>
-          <Field
-            label="Link da vaga"
-            value={job.sourceUrl || ""}
-            onChange={(value) => setJob({ ...job, sourceUrl: value || undefined })}
-            placeholder="https://empresa.com/vagas/..."
-          />
-          <div className="flex flex-wrap items-center gap-2">
-            {(["codex", "claude"] as const).map((id) => (
-              <Button
-                key={id}
-                type="button"
-                size="sm"
-                variant={provider === id ? "default" : "outline"}
-                disabled={busy || !statuses[id].installed}
-                onClick={() => setProvider(id)}
-              >
-                {providerInfo[id].label}
-                <span className="opacity-75">
-                  {statuses[id].authenticated ? "· conectado" : "· desconectado"}
-                </span>
-              </Button>
-            ))}
-          </div>
-          {importProgress && (
-            <div className="space-y-2 rounded-lg border bg-background p-4" aria-live="polite">
-              <div className="flex items-center justify-between gap-3 text-sm">
-                <span className="flex items-center gap-2 font-medium">
-                  <LoaderCircle className="size-4 animate-spin text-primary" />
-                  {importProgress.title}
-                </span>
-                <span className="text-muted-foreground">{importProgress.progress}%</span>
+      <CardContent className="space-y-8">
+        <section className="relative overflow-hidden rounded-2xl border border-primary/25 bg-gradient-to-br from-primary/10 via-primary/5 to-background p-5 sm:p-6">
+          <div className="absolute -right-16 -top-16 size-44 rounded-full bg-primary/10 blur-3xl" />
+          <div className="relative space-y-5">
+            <div className="flex items-start gap-3">
+              <span className="grid size-10 shrink-0 place-items-center rounded-xl bg-primary text-primary-foreground shadow-sm">
+                <Link2 className="size-5" />
+              </span>
+              <div>
+                <div className="flex flex-wrap items-center gap-2">
+                  <h2 className="font-semibold">Link da oportunidade</h2>
+                  <Badge>Recomendado</Badge>
+                </div>
+                <p className="mt-1 text-sm text-muted-foreground">
+                  Use uma página pública da empresa ou de um portal de vagas.
+                </p>
               </div>
-              <Progress value={importProgress.progress} />
-              <p className="text-xs text-muted-foreground">{importProgress.message}</p>
             </div>
-          )}
-          <Button
-            type="button"
-            disabled={busy || !job.sourceUrl || !selected.installed || selected.loginRunning}
-            onClick={selected.authenticated ? onImportUrl : () => login(provider)}
-          >
-            {selected.authenticated ? <Sparkles className="size-4" /> : <Wifi className="size-4" />}
-            {selected.authenticated
-              ? "Capturar dados da vaga"
-              : selected.installed
-                ? `Conectar ${providerInfo[provider].label}`
-                : `${providerInfo[provider].label} não instalado`}
-          </Button>
-        </div>
-        <div className="grid gap-5 sm:grid-cols-2">
-          <Field
-            label="Empresa"
-            value={job.company}
-            onChange={(v) => setJob({ ...job, company: v })}
-            placeholder="Ex.: Acme"
-          />
-          <Field
-            label="Cargo"
-            value={job.role}
-            onChange={(v) => setJob({ ...job, role: v })}
-            placeholder="Ex.: Engenheiro de Software"
-          />
-        </div>
-        <Label className="relative flex min-h-40 cursor-pointer flex-col items-center justify-center rounded-xl border-2 border-dashed bg-muted/30 p-6 text-center transition-colors hover:border-primary hover:bg-primary/5">
-          <Input
-            className="absolute inset-0 h-full cursor-pointer opacity-0"
-            type="file"
-            accept=".docx,.pdf,.txt,.md"
-            onChange={(e) => e.target.files?.[0] && onFile(e.target.files[0])}
-          />
-          <span className="mb-3 grid size-11 place-items-center rounded-full bg-primary/10 text-primary">
-            <Upload className="size-5" />
-          </span>
-          <strong>Importar descrição da vaga</strong>
-          <span className="mt-1 text-xs font-normal text-muted-foreground">
-            DOCX, PDF, TXT ou Markdown · até 10 MB
-          </span>
-        </Label>
-        <Field
-          area
-          label="Ou cole a descrição completa"
-          value={job.text}
-          onChange={(v) => setJob({ ...job, text: v })}
-          placeholder="Responsabilidades, requisitos e diferenciais..."
-        />
-        {job.sourceUrl && (!job.company || !job.role || job.text.length < 20) && !busy && (
-          <Alert>
-            <AlertCircle className="size-4" />
+            <div className="grid gap-3 sm:grid-cols-[1fr_auto] sm:items-end">
+              <Field
+                label="Link da vaga"
+                value={job.sourceUrl || ""}
+                onChange={(value) => setJob({ ...job, sourceUrl: value || undefined })}
+                placeholder="https://empresa.com/vagas/..."
+              />
+              <Button
+                type="button"
+                className="sm:min-w-52"
+                disabled={busy || !job.sourceUrl || !selected.installed || selected.loginRunning}
+                onClick={selected.authenticated ? onImportUrl : () => login(provider)}
+              >
+                {selected.authenticated ? (
+                  <Sparkles className="size-4" />
+                ) : (
+                  <Wifi className="size-4" />
+                )}
+                {selected.authenticated
+                  ? "Capturar dados"
+                  : selected.installed
+                    ? `Conectar ${providerInfo[provider].label}`
+                    : `${providerInfo[provider].label} não instalado`}
+              </Button>
+            </div>
+            <div className="space-y-2">
+              <span className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                IA usada na captura
+              </span>
+              <div className="grid gap-2 sm:grid-cols-2">
+                {(["codex", "claude"] as const).map((id) => (
+                  <button
+                    key={id}
+                    type="button"
+                    disabled={busy || !statuses[id].installed}
+                    onClick={() => setProvider(id)}
+                    className={cn(
+                      "flex items-center justify-between rounded-xl border bg-background/80 px-4 py-3 text-left text-sm transition-all hover:border-primary/50 disabled:cursor-not-allowed disabled:opacity-50",
+                      provider === id && "border-primary ring-2 ring-primary/15",
+                    )}
+                  >
+                    <span>
+                      <strong className="block">{providerInfo[id].label}</strong>
+                      <span className="text-xs text-muted-foreground">
+                        {providerInfo[id].company}
+                      </span>
+                    </span>
+                    <Badge variant={statuses[id].authenticated ? "default" : "secondary"}>
+                      {!statuses[id].installed
+                        ? "Indisponível"
+                        : statuses[id].authenticated
+                          ? "Conectado"
+                          : "Desconectado"}
+                    </Badge>
+                  </button>
+                ))}
+              </div>
+            </div>
+            {importProgress && (
+              <div className="space-y-2 rounded-xl border bg-background/90 p-4" aria-live="polite">
+                <div className="flex items-center justify-between gap-3 text-sm">
+                  <span className="flex items-center gap-2 font-medium">
+                    <LoaderCircle className="size-4 animate-spin text-primary" />
+                    {importProgress.title}
+                  </span>
+                  <span className="text-muted-foreground">{importProgress.progress}%</span>
+                </div>
+                <Progress value={importProgress.progress} />
+                <p className="text-xs text-muted-foreground">{importProgress.message}</p>
+              </div>
+            )}
+          </div>
+        </section>
+        <Separator />
+        <section className="space-y-5">
+          <div className="flex items-start gap-3">
+            <span className="grid size-9 shrink-0 place-items-center rounded-lg bg-muted text-muted-foreground">
+              <SearchCheck className="size-4" />
+            </span>
             <div>
-              <strong>Confira os dados capturados</strong>
-              <p className="text-sm text-muted-foreground">
-                Complete manualmente os campos que não estavam disponíveis na página.
+              <h2 className="font-semibold">Revise os dados da vaga</h2>
+              <p className="mt-1 text-sm text-muted-foreground">
+                Ajuste o conteúdo capturado ou preencha manualmente se necessário.
               </p>
             </div>
-          </Alert>
-        )}
+          </div>
+          <div className="grid gap-5 sm:grid-cols-2">
+            <Field
+              label="Empresa"
+              value={job.company}
+              onChange={(v) => setJob({ ...job, company: v })}
+              placeholder="Ex.: Acme"
+            />
+            <Field
+              label="Cargo"
+              value={job.role}
+              onChange={(v) => setJob({ ...job, role: v })}
+              placeholder="Ex.: Engenheiro de Software"
+            />
+          </div>
+          <Field
+            area
+            label="Descrição completa da vaga"
+            value={job.text}
+            onChange={(v) => setJob({ ...job, text: v })}
+            placeholder="Responsabilidades, requisitos e diferenciais..."
+          />
+          {job.sourceUrl &&
+            Boolean(job.company || job.role || job.text) &&
+            (!job.company || !job.role || job.text.length < 20) &&
+            !busy && (
+              <Alert>
+                <AlertCircle className="size-4" />
+                <div>
+                  <strong>Alguns dados precisam de atenção</strong>
+                  <p className="text-sm text-muted-foreground">
+                    Complete os campos que não estavam disponíveis na página.
+                  </p>
+                </div>
+              </Alert>
+            )}
+        </section>
       </CardContent>
-      <CardFooter className="justify-end">
+      <CardFooter className="mt-2 justify-between gap-4 border-t bg-muted/20">
+        <p className="hidden text-xs text-muted-foreground sm:block">
+          Nada será salvo antes da sua confirmação.
+        </p>
         <Button
           disabled={busy || !job.company || !job.role || job.text.length < 20}
           onClick={onSave}

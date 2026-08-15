@@ -130,7 +130,7 @@ describe("App", () => {
     await userEvent.type(screen.getByLabelText("Empresa"), "Acme");
     await userEvent.type(screen.getByLabelText("Cargo"), "Dev");
     await userEvent.type(
-      screen.getByLabelText("Ou cole a descrição completa"),
+      screen.getByLabelText("Descrição completa da vaga"),
       "Descrição completa para a vaga",
     );
     await userEvent.click(screen.getByRole("button", { name: /Salvar vaga e continuar/ }));
@@ -146,7 +146,7 @@ describe("App", () => {
     await screen.findByDisplayValue("Ana");
     await userEvent.click(screen.getByRole("button", { name: /Salvar e continuar/ }));
     await userEvent.type(screen.getByLabelText("Link da vaga"), "https://jobs.example.com/dev");
-    await userEvent.click(screen.getByRole("button", { name: "Capturar dados da vaga" }));
+    await userEvent.click(screen.getByRole("button", { name: "Capturar dados" }));
     expect(await screen.findByDisplayValue("Acme")).toBeInTheDocument();
     expect(screen.getByDisplayValue("Dev")).toBeInTheDocument();
     expect(
