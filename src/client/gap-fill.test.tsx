@@ -11,12 +11,10 @@ const profile = {
   summary: "Resumo profissional",
   skills: ["TypeScript"],
   experience: [
-    {
-      title: "Desenvolvedora",
-      company: "Acme",
-      period: "2024",
-      bullets: ["Desenvolveu aplicações web."],
-    },
+    { title: "Desenvolvedora", company: "Acme", period: "2024", bullets: ["Aplicações web."] },
+    { title: "Engenheira", company: "Beta", period: "2023", bullets: ["APIs internas."] },
+    { title: "Analista", company: "Gamma", period: "2022", bullets: ["Automações."] },
+    { title: "Estagiária", company: "Delta", period: "2021", bullets: ["Suporte técnico."] },
   ],
   education: [],
   languages: [],
@@ -30,11 +28,20 @@ const analysis = {
   suggestions: [],
   score: 50,
 };
+const props = {
+  job: { id: "job-1", company: "Nova Corp", role: "Frontend Engineer", text: "Vaga" },
+  profile,
+  analysis,
+  decisions: {},
+  setDecisions: vi.fn(),
+  next: vi.fn(),
+  busy: false,
+};
 
 afterEach(() => vi.unstubAllGlobals());
 
 describe("preenchimento de lacunas", () => {
-  it("gera uma prévia editável e confirma a nova sugestão", async () => {
+  it("gera, revisa e confirma bullets para várias experiências", async () => {
     const updatedAnalysis = {
       ...analysis,
       gaps: [],
@@ -44,122 +51,136 @@ describe("preenchimento de lacunas", () => {
           type: "bullet" as const,
           target: "experience.0.bullets.append",
           original: "",
-          proposed: "Automatizou pipelines de CI/CD com GitHub Actions.",
-          reason: "Demonstra experiência real com CI/CD.",
-          evidenceRefs: ["Contexto informado pelo usuário"],
+          proposed: "Automatizou pipelines na Acme.",
+          reason: "Evidência real.",
+          evidenceRefs: ["Implementei pipelines na Acme"],
+        },
+        {
+          id: "gap-2",
+          type: "bullet" as const,
+          target: "experience.1.bullets.append",
+          original: "",
+          proposed: "Configurou entregas contínuas na Beta.",
+          reason: "Evidência real.",
+          evidenceRefs: ["Configurei entregas na Beta"],
         },
       ],
     };
+    const decisions = [
+      { suggestionId: "gap-1", accepted: true },
+      { suggestionId: "gap-2", accepted: true },
+    ];
     const fetchMock = vi
       .fn()
       .mockResolvedValueOnce(
         new Response(
           JSON.stringify({
-            canAdd: true,
-            proposed: "Criou pipelines de CI/CD com GitHub Actions.",
-            reason: "Demonstra experiência real com CI/CD.",
-            evidenceRefs: ["Implementei pipelines"],
-            missingInfo: "",
+            items: [
+              {
+                experienceIndex: 0,
+                canAdd: true,
+                proposed: "Automatizou pipelines na Acme.",
+                reason: "Evidência real.",
+                evidenceRefs: ["Implementei pipelines na Acme"],
+                missingInfo: "",
+              },
+              {
+                experienceIndex: 1,
+                canAdd: true,
+                proposed: "Configurou entregas contínuas na Beta.",
+                reason: "Evidência real.",
+                evidenceRefs: ["Configurei entregas na Beta"],
+                missingInfo: "",
+              },
+            ],
           }),
-          { status: 200, headers: { "Content-Type": "application/json" } },
+          { headers: { "Content-Type": "application/json" } },
         ),
       )
       .mockResolvedValueOnce(
-        new Response(
-          JSON.stringify({
-            analysis: updatedAnalysis,
-            decisions: [{ suggestionId: "gap-1", accepted: true }],
-          }),
-          { status: 200, headers: { "Content-Type": "application/json" } },
-        ),
+        new Response(JSON.stringify({ analysis: updatedAnalysis, decisions }), {
+          headers: { "Content-Type": "application/json" },
+        }),
       );
     vi.stubGlobal("fetch", fetchMock);
     const onGapConfirmed = vi.fn();
-    render(
-      <ReviewStep
-        job={{ id: "job-1", company: "Nova Corp", role: "Frontend Engineer", text: "Vaga" }}
-        profile={profile}
-        analysis={analysis}
-        decisions={{}}
-        setDecisions={vi.fn()}
-        onGapConfirmed={onGapConfirmed}
-        next={vi.fn()}
-        busy={false}
-      />,
-    );
+    render(<ReviewStep {...props} onGapConfirmed={onGapConfirmed} />);
 
     await userEvent.click(screen.getByRole("button", { name: "Adicionar ao currículo" }));
     const dialog = screen.getByRole("dialog");
-    await userEvent.selectOptions(
-      within(dialog).getByLabelText("Onde você teve essa experiência?"),
-      "0",
-    );
-    fireEvent.change(within(dialog).getByLabelText("O que você realmente fez?"), {
-      target: {
-        value: "Implementei pipelines de CI/CD com GitHub Actions nos projetos da equipe.",
-      },
+    await userEvent.click(within(dialog).getByRole("button", { name: /Desenvolvedora/ }));
+    await userEvent.click(within(dialog).getByRole("button", { name: /Engenheira/ }));
+    await userEvent.click(within(dialog).getByRole("button", { name: "Descrever experiências" }));
+    const contexts = within(dialog).getAllByLabelText("O que você realmente fez?");
+    fireEvent.change(contexts[0], {
+      target: { value: "Implementei pipelines na Acme com GitHub Actions para os projetos web." },
     });
-    await userEvent.click(within(dialog).getByRole("button", { name: "Gerar prévia" }));
-    const preview = await within(dialog).findByLabelText("Revise o texto antes de adicionar");
-    fireEvent.change(preview, {
-      target: { value: "Automatizou pipelines de CI/CD com GitHub Actions." },
+    fireEvent.change(contexts[1], {
+      target: { value: "Configurei entregas na Beta usando automação para as APIs internas." },
     });
-    await userEvent.click(within(dialog).getByRole("button", { name: "Adicionar ao currículo" }));
+    await userEvent.click(within(dialog).getByRole("button", { name: "Gerar prévias com IA" }));
+    const previews = await within(dialog).findAllByLabelText("Bullet para esta experiência");
+    fireEvent.change(previews[1], {
+      target: { value: "Configurou e manteve entregas contínuas na Beta." },
+    });
+    await userEvent.click(within(dialog).getByRole("button", { name: "Adicionar 2 textos" }));
 
-    await waitFor(() => expect(onGapConfirmed).toHaveBeenCalledOnce());
-    expect(onGapConfirmed).toHaveBeenCalledWith(updatedAnalysis, [
-      { suggestionId: "gap-1", accepted: true },
-    ]);
-    expect(fetchMock).toHaveBeenCalledTimes(2);
+    await waitFor(() => expect(onGapConfirmed).toHaveBeenCalledWith(updatedAnalysis, decisions));
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      1,
+      "/api/jobs/job-1/gaps/drafts",
+      expect.objectContaining({ method: "POST" }),
+    );
+    const confirmBody = JSON.parse(fetchMock.mock.calls[1][1].body);
+    expect(confirmBody.entries).toHaveLength(2);
+    expect(confirmBody.entries[1].proposed).toBe(
+      "Configurou e manteve entregas contínuas na Beta.",
+    );
   });
 
-  it("pede mais contexto quando a IA não encontra evidência suficiente", async () => {
+  it("limita a seleção a três experiências", async () => {
+    render(<ReviewStep {...props} onGapConfirmed={vi.fn()} />);
+    await userEvent.click(screen.getByRole("button", { name: "Adicionar ao currículo" }));
+    const dialog = screen.getByRole("dialog");
+    for (const name of [/Desenvolvedora/, /Engenheira/, /Analista/])
+      await userEvent.click(within(dialog).getByRole("button", { name }));
+    expect(within(dialog).getByText("3/3 selecionadas")).toBeInTheDocument();
+    expect(within(dialog).getByRole("button", { name: /Estagiária/ })).toBeDisabled();
+  });
+
+  it("bloqueia a confirmação quando uma experiência precisa de mais contexto", async () => {
     vi.stubGlobal(
       "fetch",
       vi.fn().mockResolvedValue(
         new Response(
           JSON.stringify({
-            canAdd: false,
-            proposed: "",
-            reason: "",
-            evidenceRefs: [],
-            missingInfo: "Explique qual ferramenta de CI/CD você utilizou e em qual projeto.",
+            items: [
+              {
+                experienceIndex: 0,
+                canAdd: false,
+                proposed: "",
+                reason: "",
+                evidenceRefs: [],
+                missingInfo: "Explique qual ferramenta de CI/CD foi utilizada.",
+              },
+            ],
           }),
-          { status: 200, headers: { "Content-Type": "application/json" } },
+          { headers: { "Content-Type": "application/json" } },
         ),
       ),
     );
-    render(
-      <ReviewStep
-        job={{ id: "job-1", company: "Nova Corp", role: "Frontend Engineer", text: "Vaga" }}
-        profile={profile}
-        analysis={analysis}
-        decisions={{}}
-        setDecisions={vi.fn()}
-        onGapConfirmed={vi.fn()}
-        next={vi.fn()}
-        busy={false}
-      />,
-    );
-
+    render(<ReviewStep {...props} onGapConfirmed={vi.fn()} />);
     await userEvent.click(screen.getByRole("button", { name: "Adicionar ao currículo" }));
     const dialog = screen.getByRole("dialog");
-    await userEvent.selectOptions(
-      within(dialog).getByLabelText("Onde você teve essa experiência?"),
-      "0",
-    );
+    await userEvent.click(within(dialog).getByRole("button", { name: /Desenvolvedora/ }));
+    await userEvent.click(within(dialog).getByRole("button", { name: "Descrever experiências" }));
     fireEvent.change(within(dialog).getByLabelText("O que você realmente fez?"), {
       target: { value: "Trabalhei com automação durante os projetos internos da equipe." },
     });
-    await userEvent.click(within(dialog).getByRole("button", { name: "Gerar prévia" }));
-
+    await userEvent.click(within(dialog).getByRole("button", { name: "Gerar prévias com IA" }));
     expect(
-      await within(dialog).findByText(
-        "Explique qual ferramenta de CI/CD você utilizou e em qual projeto.",
-      ),
+      await within(dialog).findByText("Explique qual ferramenta de CI/CD foi utilizada."),
     ).toBeInTheDocument();
-    expect(
-      within(dialog).queryByLabelText("Revise o texto antes de adicionar"),
-    ).not.toBeInTheDocument();
+    expect(within(dialog).getByRole("button", { name: "Adicionar 1 texto" })).toBeDisabled();
   });
 });

@@ -35,11 +35,13 @@ import type {
   AnalysisStage,
   Decision,
   GapDraft,
+  GapBatchDraft,
   Optimization,
   Profile,
   JobWorkflow,
   JobImportProgressEvent,
 } from "../shared/schemas";
+import { calculateAdherence, makeReviewBaseline } from "../shared/adherence";
 import {
   Accordion,
   AccordionContent,
@@ -373,6 +375,7 @@ export default function App() {
         files: [],
         updatedAt: new Date().toISOString(),
         analyzedAt: new Date().toISOString(),
+        reviewBaseline: current?.reviewBaseline || makeReviewBaseline(result),
       }));
       setStep(3);
       void load();
@@ -544,6 +547,7 @@ export default function App() {
         job={job}
         profile={applicationProfile || profile}
         analysis={analysis}
+        workflow={workflow}
         decisions={decisions}
         setDecision={saveDecision}
         onGapConfirmed={(updatedAnalysis, updatedDecisions) => {
@@ -1622,6 +1626,7 @@ export function ReviewStep({
   job,
   profile,
   analysis,
+  workflow,
   decisions,
   setDecision,
   setDecisions,
@@ -1632,6 +1637,7 @@ export function ReviewStep({
   job: Job;
   profile: Profile;
   analysis: Optimization & { score?: number };
+  workflow?: JobWorkflow | null;
   decisions: Record<string, DecisionState>;
   setDecision?: (
     suggestionId: string,
@@ -1678,7 +1684,12 @@ export function ReviewStep({
     }
   };
   const matched = analysis.requirements.filter((r) => r.matched).length;
-  const score = analysis.score ?? 0;
+  const decisionList: Decision[] = Object.entries(decisions).map(([suggestionId, decision]) => ({
+    suggestionId,
+    ...decision,
+  }));
+  const adherence = calculateAdherence(analysis, decisionList, workflow?.reviewBaseline);
+  const score = adherence.score;
   return (
     <div className="space-y-5">
       <Card>
@@ -1695,8 +1706,20 @@ export function ReviewStep({
             </div>
             <Progress value={score} className="mt-3" />
             <p className="mt-2 text-sm text-muted-foreground">
-              Baseada somente nas evidências encontradas no seu perfil.
+              Evolui com novas evidências e com as melhorias aplicadas ao currículo.
             </p>
+            <div className="mt-3 flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground">
+              <span>Base: {adherence.baselineScore}%</span>
+              <span>
+                Lacunas: {adherence.resolvedGaps}/{adherence.initialGapCount}
+              </span>
+              <span>
+                Sugestões: {adherence.acceptedSuggestions}/{adherence.initialSuggestionCount}
+              </span>
+              {adherence.gain > 0 && (
+                <strong className="text-primary">+{adherence.gain} desde a análise</strong>
+              )}
+            </div>
           </div>
         </CardContent>
       </Card>
@@ -1917,62 +1940,107 @@ function GapFillDialog({
   onOpenChange: (open: boolean) => void;
   onConfirmed: (analysis: Optimization & { score?: number }, decisions: Decision[]) => void;
 }) {
-  const [experienceIndex, setExperienceIndex] = useState("");
-  const [context, setContext] = useState("");
-  const [draft, setDraft] = useState<GapDraft | null>(null);
-  const [proposed, setProposed] = useState("");
+  const [dialogStep, setDialogStep] = useState<"select" | "context" | "review">("select");
+  const [selectedIndexes, setSelectedIndexes] = useState<number[]>([]);
+  const [contexts, setContexts] = useState<Record<number, string>>({});
+  const [drafts, setDrafts] = useState<Record<number, GapDraft>>({});
+  const [proposed, setProposed] = useState<Record<number, string>>({});
   const [working, setWorking] = useState<"draft" | "confirm" | "">("");
   const [dialogError, setDialogError] = useState("");
   useEffect(() => {
-    setExperienceIndex("");
-    setContext("");
-    setDraft(null);
-    setProposed("");
+    setDialogStep("select");
+    setSelectedIndexes([]);
+    setContexts({});
+    setDrafts({});
+    setProposed({});
     setWorking("");
     setDialogError("");
   }, [selected]);
   if (!selected) return null;
+  const entries = selectedIndexes.map((experienceIndex) => ({
+    experienceIndex,
+    context: contexts[experienceIndex] || "",
+  }));
   const payload = {
     gap: selected.gap,
     gapIndex: selected.index,
-    experienceIndex: Number(experienceIndex),
-    context,
+    entries,
+  };
+  const toggleExperience = (experienceIndex: number) => {
+    setDialogError("");
+    setSelectedIndexes((current) =>
+      current.includes(experienceIndex)
+        ? current.filter((index) => index !== experienceIndex)
+        : current.length < 3
+          ? [...current, experienceIndex]
+          : current,
+    );
+  };
+  const removeExperience = (experienceIndex: number) => {
+    const nextIndexes = selectedIndexes.filter((index) => index !== experienceIndex);
+    setSelectedIndexes(nextIndexes);
+    if (!nextIndexes.length) setDialogStep("select");
+    setContexts((current) => {
+      const next = { ...current };
+      delete next[experienceIndex];
+      return next;
+    });
+    setDrafts((current) => {
+      const next = { ...current };
+      delete next[experienceIndex];
+      return next;
+    });
+    setProposed((current) => {
+      const next = { ...current };
+      delete next[experienceIndex];
+      return next;
+    });
   };
   const generateDraft = async () => {
     setWorking("draft");
     setDialogError("");
     try {
-      const result = await api<GapDraft>(`/api/jobs/${job.id}/gaps/draft`, {
+      const result = await api<GapBatchDraft>(`/api/jobs/${job.id}/gaps/drafts`, {
         method: "POST",
         body: JSON.stringify(payload),
       });
-      setDraft(result);
-      setProposed(result.proposed);
+      setDrafts(Object.fromEntries(result.items.map((item) => [item.experienceIndex, item])));
+      setProposed(
+        Object.fromEntries(result.items.map((item) => [item.experienceIndex, item.proposed])),
+      );
+      setDialogStep("review");
     } catch (error) {
-      setDialogError(error instanceof Error ? error.message : "Não foi possível gerar o texto.");
+      setDialogError(error instanceof Error ? error.message : "Não foi possível gerar os textos.");
     } finally {
       setWorking("");
     }
   };
   const confirm = async () => {
-    if (!draft) return;
+    if (!selectedIndexes.length || selectedIndexes.some((index) => !drafts[index]?.canAdd)) return;
     setWorking("confirm");
     setDialogError("");
     try {
       const result = await api<{
         analysis: Optimization & { score?: number };
         decisions: Decision[];
-      }>(`/api/jobs/${job.id}/gaps/confirm`, {
+      }>(`/api/jobs/${job.id}/gaps/confirm-many`, {
         method: "POST",
         body: JSON.stringify({
-          ...payload,
-          proposed,
-          reason: draft.reason,
-          evidenceRefs: draft.evidenceRefs,
+          gap: selected.gap,
+          gapIndex: selected.index,
+          entries: selectedIndexes.map((experienceIndex) => ({
+            experienceIndex,
+            context: contexts[experienceIndex],
+            proposed: proposed[experienceIndex],
+            reason: drafts[experienceIndex].reason,
+            evidenceRefs: drafts[experienceIndex].evidenceRefs,
+          })),
         }),
       });
       onConfirmed(result.analysis, result.decisions);
-      toast.success("Lacuna adicionada ao currículo");
+      toast.success(
+        `${selectedIndexes.length} ${selectedIndexes.length === 1 ? "texto adicionado" : "textos adicionados"} ao currículo`,
+      );
       onOpenChange(false);
     } catch (error) {
       setDialogError(error instanceof Error ? error.message : "Não foi possível salvar o texto.");
@@ -1980,101 +2048,293 @@ function GapFillDialog({
       setWorking("");
     }
   };
-  const canGenerate = experienceIndex !== "" && context.trim().length >= 30 && !working;
+  const canGenerate =
+    selectedIndexes.length > 0 &&
+    selectedIndexes.every((index) => (contexts[index] || "").trim().length >= 30) &&
+    !working;
+  const canConfirm =
+    selectedIndexes.length > 0 &&
+    selectedIndexes.every(
+      (index) => drafts[index]?.canAdd && (proposed[index] || "").trim().length >= 10,
+    ) &&
+    !working;
+  const hasUnsavedWork =
+    selectedIndexes.length > 0 || Object.values(contexts).some((value) => value.trim());
+  const requestClose = (open: boolean) => {
+    if (
+      !open &&
+      hasUnsavedWork &&
+      !window.confirm("Fechar agora descartará as informações preenchidas. Deseja continuar?")
+    )
+      return;
+    onOpenChange(open);
+  };
+  const steps = [
+    { id: "select", label: "Escolher" },
+    { id: "context", label: "Descrever" },
+    { id: "review", label: "Revisar" },
+  ] as const;
+  const currentStepIndex = steps.findIndex((step) => step.id === dialogStep);
   return (
-    <Dialog open onOpenChange={onOpenChange}>
-      <DialogContent>
-        <DialogTitle className="pr-8 text-xl font-semibold">
-          Adicionar lacuna ao currículo
-        </DialogTitle>
-        <DialogDescription className="mt-2 text-sm text-muted-foreground">
-          Conte somente fatos reais. A IA vai transformar seu contexto em um bullet para esta
-          candidatura, sem alterar seu perfil-base.
-        </DialogDescription>
-        <div className="mt-5 rounded-lg border border-amber-500/25 bg-amber-500/5 p-3 text-sm">
-          <strong className="block text-xs uppercase tracking-wider text-amber-700 dark:text-amber-400">
-            Lacuna
-          </strong>
-          <p className="mt-1">{selected.gap}</p>
-        </div>
-        {!draft?.canAdd ? (
-          <div className="mt-5 space-y-5">
-            {draft && !draft.canAdd && (
-              <Alert variant="destructive">
-                {draft.missingInfo || "Precisamos de mais contexto."}
-              </Alert>
-            )}
-            <div className="space-y-2">
-              <Label htmlFor="gap-experience">Onde você teve essa experiência?</Label>
-              <select
-                id="gap-experience"
-                value={experienceIndex}
-                onChange={(event) => setExperienceIndex(event.target.value)}
-                className="flex h-10 w-full rounded-lg border border-input bg-background px-3 text-sm shadow-xs focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+    <Dialog open onOpenChange={requestClose}>
+      <DialogContent className="max-w-4xl p-0">
+        <div className="border-b px-6 pb-5 pt-6 sm:px-8">
+          <DialogTitle className="pr-8 text-xl font-semibold">
+            Preencher lacuna em experiências
+          </DialogTitle>
+          <DialogDescription className="mt-2 text-sm text-muted-foreground">
+            Selecione até três experiências e descreva fatos reais específicos de cada uma.
+          </DialogDescription>
+          <div className="mt-5 grid grid-cols-3 gap-2">
+            {steps.map((step, index) => (
+              <div
+                key={step.id}
+                className={cn(
+                  "flex items-center gap-2 rounded-lg border px-3 py-2 text-xs text-muted-foreground",
+                  index === currentStepIndex && "border-primary/40 bg-primary/5 text-foreground",
+                  index < currentStepIndex && "text-foreground",
+                )}
               >
-                <option value="">Selecione uma experiência</option>
-                {profile.experience.map((experience, index) => (
-                  <option value={index} key={`${experience.company}-${index}`}>
-                    {experience.title} · {experience.company}
-                  </option>
-                ))}
-              </select>
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="gap-context">O que você realmente fez?</Label>
-              <Textarea
-                id="gap-context"
-                value={context}
-                maxLength={2000}
-                onChange={(event) => setContext(event.target.value)}
-                placeholder="Ex.: Implementei pipelines de CI/CD com GitHub Actions, reduzindo o tempo de deploy..."
-              />
-              <p className="text-xs text-muted-foreground">
-                Informe ações, tecnologias e resultados reais. Mínimo de 30 caracteres.
-              </p>
-            </div>
-            {dialogError && <Alert variant="destructive">{dialogError}</Alert>}
-            <div className="flex justify-end">
-              <Button disabled={!canGenerate} onClick={generateDraft}>
-                {working === "draft" ? (
-                  <LoaderCircle className="size-4 animate-spin" />
-                ) : (
-                  <Sparkles className="size-4" />
-                )}
-                {working === "draft" ? "Redigindo com IA..." : "Gerar prévia"}
-              </Button>
-            </div>
+                <span
+                  className={cn(
+                    "grid size-5 shrink-0 place-items-center rounded-full bg-muted text-[10px] font-bold",
+                    index <= currentStepIndex && "bg-primary text-primary-foreground",
+                  )}
+                >
+                  {index < currentStepIndex ? <CheckCircle2 className="size-3" /> : index + 1}
+                </span>
+                {step.label}
+              </div>
+            ))}
           </div>
-        ) : (
-          <div className="mt-5 space-y-5">
-            <div className="space-y-2">
-              <Label htmlFor="gap-preview">Revise o texto antes de adicionar</Label>
-              <Textarea
-                id="gap-preview"
-                value={proposed}
-                maxLength={600}
-                onChange={(event) => setProposed(event.target.value)}
-              />
-            </div>
-            <div className="rounded-lg bg-muted/50 p-3 text-xs text-muted-foreground">
-              <strong>Por que funciona:</strong> {draft.reason}
-            </div>
-            {dialogError && <Alert variant="destructive">{dialogError}</Alert>}
-            <div className="flex flex-wrap justify-end gap-2">
-              <Button variant="outline" disabled={!!working} onClick={() => setDraft(null)}>
-                Voltar e ajustar contexto
-              </Button>
-              <Button disabled={proposed.trim().length < 10 || !!working} onClick={confirm}>
-                {working === "confirm" ? (
-                  <LoaderCircle className="size-4 animate-spin" />
-                ) : (
-                  <CheckCircle2 className="size-4" />
-                )}
-                {working === "confirm" ? "Adicionando..." : "Adicionar ao currículo"}
-              </Button>
-            </div>
+        </div>
+        <div className="max-h-[calc(90vh-13rem)] overflow-y-auto px-6 py-5 sm:px-8">
+          <div className="rounded-lg border border-amber-500/25 bg-amber-500/5 p-3 text-sm">
+            <strong className="block text-xs uppercase tracking-wider text-amber-700 dark:text-amber-400">
+              Lacuna
+            </strong>
+            <p className="mt-1">{selected.gap}</p>
           </div>
-        )}
+          {dialogStep === "select" && (
+            <div className="mt-5 space-y-4">
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <h3 className="font-semibold">Onde você teve essa experiência?</h3>
+                  <p className="mt-1 text-sm text-muted-foreground">
+                    Escolha somente experiências em que a lacuna possa ser comprovada.
+                  </p>
+                </div>
+                <Badge variant="secondary">{selectedIndexes.length}/3 selecionadas</Badge>
+              </div>
+              <div className="grid gap-3 sm:grid-cols-2">
+                {profile.experience.map((experience, index) => {
+                  const checked = selectedIndexes.includes(index);
+                  const limitReached = selectedIndexes.length >= 3 && !checked;
+                  return (
+                    <button
+                      type="button"
+                      aria-pressed={checked}
+                      disabled={limitReached}
+                      key={`${experience.company}-${index}`}
+                      onClick={() => toggleExperience(index)}
+                      className={cn(
+                        "flex items-start gap-3 rounded-xl border p-4 text-left transition-all hover:border-primary/50 disabled:cursor-not-allowed disabled:opacity-45",
+                        checked && "border-primary bg-primary/5 ring-2 ring-primary/15",
+                      )}
+                    >
+                      <span
+                        className={cn(
+                          "mt-0.5 grid size-5 shrink-0 place-items-center rounded border",
+                          checked && "border-primary bg-primary text-primary-foreground",
+                        )}
+                      >
+                        {checked && <CheckCircle2 className="size-3.5" />}
+                      </span>
+                      <span className="min-w-0">
+                        <strong className="block truncate text-sm">{experience.title}</strong>
+                        <span className="mt-1 block text-xs text-muted-foreground">
+                          {experience.company} · {experience.period}
+                        </span>
+                        <span className="mt-2 block text-xs text-muted-foreground">
+                          {experience.bullets.length} itens no currículo
+                        </span>
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+              {dialogError && <Alert variant="destructive">{dialogError}</Alert>}
+            </div>
+          )}
+          {dialogStep === "context" && (
+            <div className="mt-5 space-y-5">
+              <div>
+                <h3 className="font-semibold">Descreva o que aconteceu em cada experiência</h3>
+                <p className="mt-1 text-sm text-muted-foreground">
+                  Não copie o mesmo texto: informe ações, tecnologias e resultados específicos.
+                </p>
+              </div>
+              {selectedIndexes.map((experienceIndex) => {
+                const experience = profile.experience[experienceIndex];
+                const value = contexts[experienceIndex] || "";
+                return (
+                  <div className="space-y-3 rounded-xl border p-4" key={experienceIndex}>
+                    <div className="flex items-start justify-between gap-3">
+                      <div>
+                        <strong className="text-sm">{experience.title}</strong>
+                        <p className="text-xs text-muted-foreground">
+                          {experience.company} · {experience.period}
+                        </p>
+                      </div>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => removeExperience(experienceIndex)}
+                      >
+                        Remover
+                      </Button>
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor={`gap-context-${experienceIndex}`}>
+                        O que você realmente fez?
+                      </Label>
+                      <Textarea
+                        id={`gap-context-${experienceIndex}`}
+                        value={value}
+                        maxLength={2000}
+                        onChange={(event) =>
+                          setContexts((current) => ({
+                            ...current,
+                            [experienceIndex]: event.target.value,
+                          }))
+                        }
+                        placeholder="Descreva ações, ferramentas e resultados reais nesta experiência..."
+                      />
+                      <p
+                        className={cn(
+                          "text-xs text-muted-foreground",
+                          value.trim().length > 0 && value.trim().length < 30 && "text-amber-600",
+                        )}
+                      >
+                        {value.length}/2000 · mínimo de 30 caracteres
+                      </p>
+                    </div>
+                  </div>
+                );
+              })}
+              {dialogError && <Alert variant="destructive">{dialogError}</Alert>}
+            </div>
+          )}
+          {dialogStep === "review" && (
+            <div className="mt-5 space-y-5">
+              <div>
+                <h3 className="font-semibold">Revise cada texto antes de adicionar</h3>
+                <p className="mt-1 text-sm text-muted-foreground">
+                  Todos os textos precisam estar válidos para concluir.
+                </p>
+              </div>
+              {selectedIndexes.map((experienceIndex) => {
+                const experience = profile.experience[experienceIndex];
+                const draft = drafts[experienceIndex];
+                if (!draft) return null;
+                return (
+                  <div
+                    className={cn(
+                      "space-y-3 rounded-xl border p-4",
+                      !draft.canAdd && "border-destructive/35 bg-destructive/5",
+                    )}
+                    key={experienceIndex}
+                  >
+                    <div className="flex items-start justify-between gap-3">
+                      <div>
+                        <strong className="text-sm">{experience.title}</strong>
+                        <p className="text-xs text-muted-foreground">{experience.company}</p>
+                      </div>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => removeExperience(experienceIndex)}
+                      >
+                        Remover
+                      </Button>
+                    </div>
+                    {draft.canAdd ? (
+                      <>
+                        <div className="space-y-2">
+                          <Label htmlFor={`gap-preview-${experienceIndex}`}>
+                            Bullet para esta experiência
+                          </Label>
+                          <Textarea
+                            id={`gap-preview-${experienceIndex}`}
+                            value={proposed[experienceIndex] || ""}
+                            maxLength={600}
+                            onChange={(event) =>
+                              setProposed((current) => ({
+                                ...current,
+                                [experienceIndex]: event.target.value,
+                              }))
+                            }
+                          />
+                        </div>
+                        <div className="rounded-lg bg-muted/50 p-3 text-xs text-muted-foreground">
+                          <strong>Por que funciona:</strong> {draft.reason}
+                        </div>
+                      </>
+                    ) : (
+                      <Alert variant="destructive">
+                        {draft.missingInfo || "Precisamos de mais contexto para esta experiência."}
+                      </Alert>
+                    )}
+                  </div>
+                );
+              })}
+              {selectedIndexes.some((index) => !drafts[index]?.canAdd) && (
+                <Alert>
+                  Corrija o contexto ou remova as experiências sem evidência suficiente para
+                  continuar.
+                </Alert>
+              )}
+              {dialogError && <Alert variant="destructive">{dialogError}</Alert>}
+            </div>
+          )}
+        </div>
+        <div className="flex flex-wrap items-center justify-between gap-3 border-t bg-muted/20 px-6 py-4 sm:px-8">
+          <Button
+            variant="outline"
+            disabled={!!working || dialogStep === "select"}
+            onClick={() => setDialogStep(dialogStep === "review" ? "context" : "select")}
+          >
+            Voltar
+          </Button>
+          {dialogStep === "select" && (
+            <Button disabled={!selectedIndexes.length} onClick={() => setDialogStep("context")}>
+              Descrever experiências
+              <ChevronRight className="size-4" />
+            </Button>
+          )}
+          {dialogStep === "context" && (
+            <Button disabled={!canGenerate} onClick={generateDraft}>
+              {working === "draft" ? (
+                <LoaderCircle className="size-4 animate-spin" />
+              ) : (
+                <Sparkles className="size-4" />
+              )}
+              {working === "draft" ? "Redigindo textos..." : "Gerar prévias com IA"}
+            </Button>
+          )}
+          {dialogStep === "review" && (
+            <Button disabled={!canConfirm} onClick={confirm}>
+              {working === "confirm" ? (
+                <LoaderCircle className="size-4 animate-spin" />
+              ) : (
+                <CheckCircle2 className="size-4" />
+              )}
+              {working === "confirm"
+                ? "Adicionando..."
+                : `Adicionar ${selectedIndexes.length} ${selectedIndexes.length === 1 ? "texto" : "textos"}`}
+            </Button>
+          )}
+        </div>
       </DialogContent>
     </Dialog>
   );

@@ -238,6 +238,7 @@ export async function invalidateJobDerived(id: string) {
     analyzedAt: undefined,
     reviewedAt: undefined,
     generatedAt: undefined,
+    reviewBaseline: undefined,
   });
 }
 export async function listJobs() {

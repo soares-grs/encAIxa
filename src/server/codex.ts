@@ -5,6 +5,7 @@ import path from "node:path";
 import { existsSync } from "node:fs";
 import {
   gapDraftSchema,
+  gapBatchDraftSchema,
   jobDraftSchema,
   optimizationSchema,
   profileDraftSchema,
@@ -14,6 +15,7 @@ import { ProviderError, type ProviderActivityReporter } from "./providers/types.
 import {
   optimizationPrompt,
   gapFillPrompt,
+  gapFillBatchPrompt,
   jobExtractionPrompt,
   profileExtractionPrompt,
   translationPrompt,
@@ -279,6 +281,37 @@ export async function fillGap(input: Parameters<typeof gapFillPrompt>[0]) {
     if (response.code !== 0)
       throw new Error(response.stderr.trim() || "Não foi possível preencher a lacuna.");
     return gapDraftSchema.parse(JSON.parse(await fs.readFile(resultPath, "utf8")));
+  } finally {
+    await fs.rm(temp, { recursive: true, force: true });
+  }
+}
+export async function fillGaps(input: Parameters<typeof gapFillBatchPrompt>[0]) {
+  const temp = await fs.mkdtemp(path.join(os.tmpdir(), "encaixa-gaps-"));
+  const resultPath = path.join(temp, "result.json");
+  try {
+    const response = await runCodex(
+      [
+        "exec",
+        "--ephemeral",
+        "--ignore-user-config",
+        "--ignore-rules",
+        "--sandbox",
+        "read-only",
+        "--skip-git-repo-check",
+        "-C",
+        temp,
+        "--output-schema",
+        path.resolve("schemas", "gap-batch-draft.schema.json"),
+        "--output-last-message",
+        resultPath,
+        "-",
+      ],
+      gapFillBatchPrompt(input),
+      180_000,
+    );
+    if (response.code !== 0)
+      throw new Error(response.stderr.trim() || "Não foi possível preencher as lacunas.");
+    return gapBatchDraftSchema.parse(JSON.parse(await fs.readFile(resultPath, "utf8")));
   } finally {
     await fs.rm(temp, { recursive: true, force: true });
   }

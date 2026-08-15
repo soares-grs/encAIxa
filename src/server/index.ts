@@ -8,6 +8,7 @@ import {
   profileDraftSchema,
   jobDraftSchema,
   decisionSchema,
+  gapBatchDraftSchema,
   type AnalysisActivityEvent,
   type AnalysisProgressEvent,
   type AnalysisStage,
@@ -19,6 +20,7 @@ import {
   type JobImportProgressEvent,
   type JobImportStage,
 } from "../shared/schemas.js";
+import { calculateAdherence, makeReviewBaseline, requirementScore } from "../shared/adherence.js";
 import { codexStatus, startLogin } from "./codex.js";
 import {
   getProvider,
@@ -406,7 +408,12 @@ app.get(
     res.json({
       id: req.params.id,
       ...job,
-      analysis: analysis ? { ...analysis, score: score(analysis.requirements) } : null,
+      analysis: analysis
+        ? {
+            ...analysis,
+            score: calculateAdherence(analysis, decisions, workflow.reviewBaseline).score,
+          }
+        : null,
       decisions,
       workflow,
       files: workflow.files,
@@ -503,6 +510,27 @@ const gapContextSchema = z.object({
   experienceIndex: z.number().int().nonnegative(),
   context: z.string().trim().min(30, "Conte um pouco mais sobre essa experiência.").max(2_000),
 });
+const gapBatchEntrySchema = z.object({
+  experienceIndex: z.number().int().nonnegative(),
+  context: z.string().trim().min(30, "Conte um pouco mais sobre cada experiência.").max(2_000),
+});
+const gapBatchBaseSchema = z.object({
+  gap: z.string().min(1),
+  gapIndex: z.number().int().nonnegative(),
+  entries: z.array(gapBatchEntrySchema).min(1).max(3),
+});
+const uniqueGapExperiences = (
+  value: { entries: Array<{ experienceIndex: number }> },
+  context: z.RefinementCtx,
+) => {
+  const indexes = value.entries.map((entry) => entry.experienceIndex);
+  if (new Set(indexes).size !== indexes.length)
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: "Selecione experiências diferentes.",
+    });
+};
+const gapBatchContextSchema = gapBatchBaseSchema.superRefine(uniqueGapExperiences);
 app.post(
   "/api/jobs/:id/gaps/draft",
   wrap(async (req: any, res: any) => {
@@ -523,6 +551,103 @@ app.post(
       provider.fillGap({ gap, context: input.context, experience }),
     );
     res.json(draft);
+  }),
+);
+app.post(
+  "/api/jobs/:id/gaps/drafts",
+  wrap(async (req: any, res: any) => {
+    const input = gapBatchContextSchema.parse(req.body);
+    const [analysis, profile, job] = await Promise.all([
+      readAnalysis(req.params.id),
+      readProfileSnapshot(req.params.id),
+      readJob(req.params.id),
+    ]);
+    if (analysis.gaps[input.gapIndex] !== input.gap)
+      throw new ProviderError("Essa lacuna mudou. Atualize a candidatura e tente novamente.", 409);
+    const entries = input.entries.map((entry) => {
+      const experience = profile.experience[entry.experienceIndex];
+      if (!experience) throw new ProviderError("Experiência profissional inválida.", 400);
+      return { ...entry, experience };
+    });
+    const providerId: ProviderId = isProviderId(job.provider) ? job.provider : "codex";
+    const provider = await requireReady(getProvider(providerId));
+    const result = gapBatchDraftSchema.parse(
+      await executeProvider(() => provider.fillGaps({ gap: input.gap, entries })),
+    );
+    const expected = new Set(input.entries.map((entry) => entry.experienceIndex));
+    const returned = new Set(result.items.map((item) => item.experienceIndex));
+    if (
+      result.items.length !== input.entries.length ||
+      returned.size !== expected.size ||
+      [...expected].some((index) => !returned.has(index))
+    )
+      throw new ProviderError("A IA não retornou um resultado para cada experiência.", 502);
+    res.json(result);
+  }),
+);
+app.post(
+  "/api/jobs/:id/gaps/confirm-many",
+  wrap(async (req: any, res: any) => {
+    const input = gapBatchBaseSchema
+      .extend({
+        entries: z
+          .array(
+            gapBatchEntrySchema.extend({
+              proposed: z.string().trim().min(10).max(600),
+              reason: z.string().trim().min(1).max(1_000),
+              evidenceRefs: z.array(z.string().trim().min(1).max(500)).max(8),
+            }),
+          )
+          .min(1)
+          .max(3),
+      })
+      .superRefine(uniqueGapExperiences)
+      .parse(req.body);
+    const [analysis, profile, decisions, workflow] = await Promise.all([
+      readAnalysis(req.params.id),
+      readProfileSnapshot(req.params.id),
+      readDecisions(req.params.id),
+      readWorkflow(req.params.id),
+    ]);
+    if (analysis.gaps[input.gapIndex] !== input.gap)
+      throw new ProviderError("Essa lacuna mudou. Atualize a candidatura e tente novamente.", 409);
+    const additions = input.entries.map((entry) => {
+      if (!profile.experience[entry.experienceIndex])
+        throw new ProviderError("Experiência profissional inválida.", 400);
+      const id = `gap-${randomUUID()}`;
+      const verifiedEvidence = entry.evidenceRefs
+        .filter((reference) => entry.context.includes(reference))
+        .slice(0, 5);
+      return {
+        suggestion: {
+          id,
+          type: "bullet" as const,
+          target: `experience.${entry.experienceIndex}.bullets.append`,
+          original: "",
+          proposed: entry.proposed,
+          reason: entry.reason,
+          evidenceRefs: verifiedEvidence.length
+            ? verifiedEvidence
+            : [`Contexto informado pelo usuário: ${entry.context.slice(0, 300)}`],
+        },
+        decision: decisionSchema.parse({ suggestionId: id, accepted: true }),
+      };
+    });
+    const updatedAnalysis = {
+      ...analysis,
+      gaps: analysis.gaps.filter((_, index) => index !== input.gapIndex),
+      suggestions: [...analysis.suggestions, ...additions.map(({ suggestion }) => suggestion)],
+    };
+    const updatedDecisions = [...decisions, ...additions.map(({ decision }) => decision)];
+    await saveAnalysis(req.params.id, updatedAnalysis);
+    await saveDecisions(req.params.id, updatedDecisions);
+    res.json({
+      analysis: {
+        ...updatedAnalysis,
+        score: calculateAdherence(updatedAnalysis, updatedDecisions, workflow.reviewBaseline).score,
+      },
+      decisions: updatedDecisions,
+    });
   }),
 );
 app.post(
@@ -573,7 +698,14 @@ app.post(
     await saveAnalysis(req.params.id, updatedAnalysis);
     await saveDecisions(req.params.id, updatedDecisions);
     res.json({
-      analysis: { ...updatedAnalysis, score: score(updatedAnalysis.requirements) },
+      analysis: {
+        ...updatedAnalysis,
+        score: calculateAdherence(
+          updatedAnalysis,
+          updatedDecisions,
+          (await readWorkflow(req.params.id)).reviewBaseline,
+        ).score,
+      },
       decisions: updatedDecisions,
     });
   }),
@@ -759,7 +891,7 @@ async function analyzeJob(
     title: "Conferindo o resultado",
     message: "Validando requisitos, lacunas e sugestões antes de exibir tudo para você.",
   });
-  const result = { ...analysis, score: score(analysis.requirements) };
+  const result = { ...analysis, score: requirementScore(analysis.requirements) };
   report({
     type: "progress",
     stage: "saving",
@@ -778,16 +910,9 @@ async function analyzeJob(
     provider: providerId,
     files: [],
     analyzedAt: new Date().toISOString(),
+    reviewBaseline: makeReviewBaseline(analysis),
   });
   return result;
-}
-function score(requirements: any[]) {
-  const max = requirements.reduce((n, r) => n + (r.kind === "required" ? 2 : 1), 0);
-  const got = requirements.reduce(
-    (n, r) => n + (r.matched ? (r.kind === "required" ? 2 : 1) : 0),
-    0,
-  );
-  return max ? Math.round((got / max) * 100) : 0;
 }
 const dist = path.resolve("dist");
 app.use(express.static(dist));

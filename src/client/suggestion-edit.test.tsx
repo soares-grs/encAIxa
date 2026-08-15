@@ -43,6 +43,27 @@ const baseProps = {
 };
 
 describe("edição de sugestões", () => {
+  it("atualiza a aderência ao aplicar uma sugestão", () => {
+    render(
+      <ReviewStep
+        {...baseProps}
+        workflow={{
+          version: 1,
+          step: 3,
+          provider: "codex",
+          languages: ["ptbr"],
+          files: [],
+          updatedAt: "2026-01-01",
+          reviewBaseline: { score: 0, initialGapCount: 0, suggestionIds: ["s1"] },
+        }}
+        decisions={{ s1: { accepted: true } }}
+        setDecision={vi.fn()}
+      />,
+    );
+    expect(screen.getByText("10%")).toBeInTheDocument();
+    expect(screen.getByText("+10 desde a análise")).toBeInTheDocument();
+  });
+
   it("edita inline e aplica o texto personalizado como aceito", async () => {
     const setDecision = vi.fn(async () => true);
     render(

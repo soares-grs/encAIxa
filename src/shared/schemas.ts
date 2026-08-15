@@ -97,6 +97,16 @@ export const gapDraftSchema = z.object({
   evidenceRefs: z.array(z.string()),
   missingInfo: z.string(),
 });
+export const gapBatchDraftSchema = z.object({
+  items: z
+    .array(
+      gapDraftSchema.extend({
+        experienceIndex: z.number().int().nonnegative(),
+      }),
+    )
+    .min(1)
+    .max(3),
+});
 export const jobDraftSchema = z.object({
   company: z.string().default(""),
   role: z.string().default(""),
@@ -131,12 +141,20 @@ export const jobWorkflowSchema = z.object({
   analyzedAt: z.string().optional(),
   reviewedAt: z.string().optional(),
   generatedAt: z.string().optional(),
+  reviewBaseline: z
+    .object({
+      score: z.number().int().min(0).max(100),
+      initialGapCount: z.number().int().nonnegative(),
+      suggestionIds: z.array(z.string()),
+    })
+    .optional(),
 });
 export type Profile = z.infer<typeof profileSchema>;
 export type ProfileDraft = z.infer<typeof profileDraftSchema>;
 export type Optimization = z.infer<typeof optimizationSchema>;
 export type Suggestion = z.infer<typeof suggestionSchema>;
 export type GapDraft = z.infer<typeof gapDraftSchema>;
+export type GapBatchDraft = z.infer<typeof gapBatchDraftSchema>;
 export type JobDraft = z.infer<typeof jobDraftSchema>;
 export type OutputFile = z.infer<typeof outputFileSchema>;
 export type JobWorkflow = z.infer<typeof jobWorkflowSchema>;

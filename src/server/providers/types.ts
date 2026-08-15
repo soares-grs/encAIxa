@@ -1,5 +1,6 @@
 import type {
   GapDraft,
+  GapBatchDraft,
   JobDraft,
   Optimization,
   Profile,
@@ -23,6 +24,14 @@ export type GapFillInput = {
   context: string;
   experience: Profile["experience"][number];
 };
+export type GapFillBatchInput = {
+  gap: string;
+  entries: Array<{
+    experienceIndex: number;
+    context: string;
+    experience: Profile["experience"][number];
+  }>;
+};
 
 export interface AiProvider {
   id: ProviderId;
@@ -38,6 +47,7 @@ export interface AiProvider {
   extractProfile(resumeText: string, report?: ProviderActivityReporter): Promise<ProfileDraft>;
   extractJob(pageContent: string, report?: ProviderActivityReporter): Promise<JobDraft>;
   fillGap(input: GapFillInput): Promise<GapDraft>;
+  fillGaps(input: GapFillBatchInput): Promise<GapBatchDraft>;
 }
 
 export class ProviderError extends Error {
