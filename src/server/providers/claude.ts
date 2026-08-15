@@ -315,9 +315,9 @@ export const claudeProvider: AiProvider = {
   async translateProfile(profile: Profile) {
     return profileSchema.parse(await structured(translationPrompt(profile), profileJsonSchema));
   },
-  async extractProfile(resumeText: string) {
+  async extractProfile(resumeText: string, report?: ProviderActivityReporter) {
     return profileDraftSchema.parse(
-      await structured(profileExtractionPrompt(resumeText), profileJsonSchema),
+      await structured(profileExtractionPrompt(resumeText), profileJsonSchema, report),
     );
   },
   async fillGap(input) {

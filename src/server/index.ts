@@ -10,6 +10,9 @@ import {
   type AnalysisProgressEvent,
   type AnalysisStage,
   type Decision,
+  type ImportActivityEvent,
+  type ImportProgressEvent,
+  type ImportStage,
 } from "../shared/schemas.js";
 import { codexStatus, startLogin } from "./codex.js";
 import {
@@ -123,6 +126,118 @@ app.post(
     res.json({ profile, provider: providerId });
   }),
 );
+app.post("/api/onboarding/import/stream", upload.single("file"), async (req: any, res: any) => {
+  let stage: ImportStage = "reading_file";
+  const startedAt = Date.now();
+  const send = (event: object) => res.write(`${JSON.stringify(event)}\n`);
+  res.status(200);
+  res.set({
+    "Content-Type": "application/x-ndjson; charset=utf-8",
+    "Cache-Control": "no-cache, no-transform",
+    Connection: "keep-alive",
+    "X-Accel-Buffering": "no",
+  });
+  res.flushHeaders();
+  const progress = (event: Omit<ImportProgressEvent, "type">) => {
+    stage = event.stage;
+    send({ type: "progress", ...event });
+  };
+  const activity = (message: string): void =>
+    send({
+      type: "activity",
+      stage,
+      message,
+      timestamp: new Date().toISOString(),
+    } satisfies ImportActivityEvent);
+  const heartbeat = setInterval(
+    () =>
+      send({
+        type: "heartbeat",
+        stage,
+        timestamp: new Date().toISOString(),
+        elapsedMs: Date.now() - startedAt,
+      }),
+    5_000,
+  );
+  try {
+    if (!req.file) throw new ProviderError("Selecione um arquivo para importar.", 400);
+    progress({
+      stage: "reading_file",
+      progress: 10,
+      title: "Lendo seu currículo",
+      message: `Preparando ${req.file.originalname} para a importação.`,
+    });
+    const extension = path.extname(req.file.originalname).toLowerCase();
+    let profile;
+    let providerId: ProviderId = "codex";
+    if (extension === ".json") {
+      try {
+        profile = profileDraftSchema.parse(JSON.parse(req.file.buffer.toString("utf8")));
+      } catch {
+        throw new ProviderError("O arquivo JSON não contém um perfil válido.", 400);
+      }
+    } else {
+      progress({
+        stage: "checking_provider",
+        progress: 22,
+        title: "Verificando a IA",
+        message: "Confirmando que o provedor escolhido está conectado.",
+      });
+      providerId = isProviderId(req.body.provider) ? req.body.provider : "codex";
+      const provider = await requireReady(getProvider(providerId));
+      const text = await extractText(req.file);
+      activity("Texto do currículo extraído com segurança.");
+      progress({
+        stage: "extracting",
+        progress: 38,
+        title: `${provider.label} está organizando seu perfil`,
+        message: "Identificando experiências, formação, competências e contatos.",
+      });
+      const activityMessages = {
+        session_started: `Sessão segura do ${provider.label} iniciada.`,
+        response_in_progress: `${provider.label} está estruturando as informações.`,
+        response_refined: `${provider.label} está refinando o perfil.`,
+        result_received: `Resposta do ${provider.label} recebida.`,
+      } as const;
+      profile = await executeProvider(() =>
+        provider.extractProfile(text, (providerActivity) =>
+          activity(activityMessages[providerActivity]),
+        ),
+      );
+    }
+    progress({
+      stage: "validating",
+      progress: 84,
+      title: "Conferindo os dados",
+      message: "Validando o perfil antes de mostrar a revisão.",
+    });
+    profile = profileDraftSchema.parse(profile);
+    progress({
+      stage: "saving",
+      progress: 95,
+      title: "Preparando a revisão",
+      message: "Salvando o rascunho localmente.",
+    });
+    await saveOnboardingDraft({ mode: "import", step: 4, provider: providerId, profile });
+    send({ type: "complete", data: { profile, provider: providerId } });
+  } catch (error) {
+    send({
+      type: "error",
+      stage,
+      message:
+        error instanceof z.ZodError
+          ? error.issues.map((issue) => issue.message).join("; ")
+          : error instanceof Error
+            ? error.message
+            : "Não foi possível importar o currículo.",
+      statusCode:
+        error instanceof ProviderError ? error.statusCode : error instanceof z.ZodError ? 400 : 500,
+    });
+  } finally {
+    clearInterval(heartbeat);
+    res.end();
+  }
+});
 app.post(
   "/api/onboarding/complete",
   wrap(async (req: any, res: any) => res.json(await completeOnboarding(req.body.profile))),

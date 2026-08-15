@@ -16,8 +16,14 @@ import {
   Wifi,
 } from "lucide-react";
 import { toast, Toaster } from "sonner";
-import type { Profile } from "../shared/schemas";
+import type {
+  ImportActivityEvent,
+  ImportProgressEvent,
+  ImportStage,
+  Profile,
+} from "../shared/schemas";
 import { api } from "@/api";
+import { streamProfileImport } from "@/profile-import-stream";
 import {
   Alert,
   Badge,
@@ -44,6 +50,11 @@ type ProviderStatus = {
   loginOutput: string;
 };
 type ProviderStatuses = Record<ProviderId, ProviderStatus>;
+type ImportRun = {
+  event: ImportProgressEvent;
+  activities: ImportActivityEvent[];
+  startedAt: number;
+};
 export type OnboardingState = {
   completed: boolean;
   version: number;
@@ -74,6 +85,7 @@ export default function Onboarding({
   const [profile, setProfile] = useState<Profile>(initial.profile);
   const [busy, setBusy] = useState("");
   const [error, setError] = useState("");
+  const [importRun, setImportRun] = useState<ImportRun | null>(null);
 
   useEffect(() => {
     if (statuses[provider].installed && statuses[provider].authenticated) return;
@@ -132,13 +144,26 @@ export default function Onboarding({
       );
       if (!isJson && !importProvider)
         throw new Error("Conecte o Codex ou o Claude antes de importar este formato.");
-      const form = new FormData();
-      form.append("file", file);
-      form.append("provider", importProvider || provider);
-      const result = await api<{ profile: Profile; provider: ProviderId }>(
-        "/api/onboarding/import",
-        { method: "POST", body: form },
-      );
+      setImportRun({
+        event: {
+          type: "progress",
+          stage: "reading_file",
+          progress: 4,
+          title: "Enviando seu currículo",
+          message: `Preparando ${file.name}.`,
+        },
+        activities: [],
+        startedAt: Date.now(),
+      });
+      const result = await streamProfileImport(file, importProvider || provider, (event) => {
+        setImportRun((current) => {
+          if (!current) return current;
+          if (event.type === "progress") return { ...current, event };
+          if (event.type === "activity")
+            return { ...current, activities: [...current.activities, event].slice(-6) };
+          return current;
+        });
+      });
       setProfile(result.profile);
       setProvider(result.provider);
       setMode("import");
@@ -200,6 +225,7 @@ export default function Onboarding({
               revisão.
             </p>
           </div>
+          {importRun && busy && <ImportProgressCard run={importRun} />}
           <div className="mt-8 grid gap-3 sm:grid-cols-2">
             {(["codex", "claude"] as const).map((id) => (
               <button
@@ -254,7 +280,7 @@ export default function Onboarding({
           <div className="mt-5 flex items-center gap-3 text-xs text-muted-foreground">
             <FileJson className="size-4" /> JSON não exige conexão com IA.
           </div>
-          <Feedback busy={busy} error={error} />
+          <Feedback busy={importRun ? "" : busy} error={error} />
         </div>
       </OnboardingShell>
     );
@@ -298,6 +324,91 @@ export default function Onboarding({
         </div>
       </div>
     </OnboardingShell>
+  );
+}
+
+const importStages: Array<{ id: ImportStage; label: string }> = [
+  { id: "reading_file", label: "Arquivo lido" },
+  { id: "checking_provider", label: "IA verificada" },
+  { id: "extracting", label: "Perfil estruturado" },
+  { id: "validating", label: "Dados validados" },
+  { id: "saving", label: "Revisão preparada" },
+];
+
+function ImportProgressCard({ run }: { run: ImportRun }) {
+  const [elapsed, setElapsed] = useState(0);
+  useEffect(() => {
+    const timer = setInterval(
+      () => setElapsed(Math.floor((Date.now() - run.startedAt) / 1000)),
+      1000,
+    );
+    return () => clearInterval(timer);
+  }, [run.startedAt]);
+  const activeIndex = importStages.findIndex((stage) => stage.id === run.event.stage);
+  return (
+    <Card className="mt-7 overflow-hidden" aria-live="polite">
+      <div className="h-1 animate-pulse bg-gradient-to-r from-transparent via-primary to-transparent" />
+      <CardContent className="p-6">
+        <div className="flex items-start gap-4">
+          <div className="grid size-12 shrink-0 place-items-center rounded-2xl bg-primary/10 text-primary">
+            <Sparkles className="size-6 animate-pulse" />
+          </div>
+          <div className="min-w-0 flex-1">
+            <div className="flex items-center justify-between gap-3">
+              <Badge variant="secondary">Importação inteligente</Badge>
+              <span className="text-xs tabular-nums text-muted-foreground">
+                {String(Math.floor(elapsed / 60)).padStart(2, "0")}:
+                {String(elapsed % 60).padStart(2, "0")}
+              </span>
+            </div>
+            <h2 className="mt-3 text-lg font-bold">{run.event.title}</h2>
+            <p className="mt-1 text-sm text-muted-foreground">{run.event.message}</p>
+          </div>
+        </div>
+        <Progress
+          value={run.event.progress}
+          aria-label="Progresso da importação"
+          className="mt-5 h-2.5"
+        />
+        <div className="mt-5 grid gap-2 sm:grid-cols-5">
+          {importStages.map((stage, index) => (
+            <div
+              key={stage.id}
+              className={cn(
+                "rounded-lg border p-2 text-xs text-muted-foreground",
+                index === activeIndex && "border-primary/40 bg-primary/5 text-foreground",
+                index < activeIndex && "text-foreground",
+              )}
+            >
+              {index < activeIndex ? (
+                <Check className="mb-1 size-3.5 text-primary" />
+              ) : (
+                <LoaderCircle
+                  className={cn(
+                    "mb-1 size-3.5",
+                    index === activeIndex && "animate-spin text-primary",
+                  )}
+                />
+              )}
+              {stage.label}
+            </div>
+          ))}
+        </div>
+        {run.activities.length > 0 && (
+          <ol className="mt-5 space-y-2 rounded-xl border bg-muted/25 p-4 text-sm">
+            {run.activities.map((item, index) => (
+              <li key={`${item.timestamp}-${index}`} className="flex gap-2 text-muted-foreground">
+                <span className="mt-2 size-1.5 shrink-0 rounded-full bg-primary" />
+                {item.message}
+              </li>
+            ))}
+          </ol>
+        )}
+        <p className="mt-4 text-center text-xs text-muted-foreground">
+          Você pode acompanhar cada etapa sem recarregar a página.
+        </p>
+      </CardContent>
+    </Card>
   );
 }
 

@@ -29,7 +29,7 @@ export interface AiProvider {
     report?: ProviderActivityReporter,
   ): Promise<Optimization>;
   translateProfile(profile: Profile): Promise<Profile>;
-  extractProfile(resumeText: string): Promise<ProfileDraft>;
+  extractProfile(resumeText: string, report?: ProviderActivityReporter): Promise<ProfileDraft>;
   fillGap(input: GapFillInput): Promise<GapDraft>;
 }
 

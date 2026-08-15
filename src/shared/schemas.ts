@@ -167,3 +167,41 @@ export type AnalysisStreamEvent =
   | AnalysisHeartbeatEvent
   | AnalysisCompleteEvent
   | AnalysisErrorEvent;
+
+export type ImportStage =
+  "reading_file" | "checking_provider" | "extracting" | "validating" | "saving";
+export type ImportProgressEvent = {
+  type: "progress";
+  stage: ImportStage;
+  progress: number;
+  title: string;
+  message: string;
+};
+export type ImportActivityEvent = {
+  type: "activity";
+  stage: ImportStage;
+  message: string;
+  timestamp: string;
+};
+export type ImportHeartbeatEvent = {
+  type: "heartbeat";
+  stage: ImportStage;
+  timestamp: string;
+  elapsedMs: number;
+};
+export type ImportCompleteEvent = {
+  type: "complete";
+  data: { profile: ProfileDraft; provider: "codex" | "claude" };
+};
+export type ImportErrorEvent = {
+  type: "error";
+  stage: ImportStage;
+  message: string;
+  statusCode: number;
+};
+export type ImportStreamEvent =
+  | ImportProgressEvent
+  | ImportActivityEvent
+  | ImportHeartbeatEvent
+  | ImportCompleteEvent
+  | ImportErrorEvent;

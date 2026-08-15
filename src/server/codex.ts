@@ -182,10 +182,12 @@ export async function translateProfile(profile: Profile) {
     await fs.rm(temp, { recursive: true, force: true });
   }
 }
-export async function extractProfile(resumeText: string) {
+export async function extractProfile(resumeText: string, report?: ProviderActivityReporter) {
   const temp = await fs.mkdtemp(path.join(os.tmpdir(), "encaixa-profile-import-"));
   const resultPath = path.join(temp, "result.json");
   try {
+    report?.("session_started");
+    report?.("response_in_progress");
     const response = await runCodex(
       [
         "exec",
@@ -208,6 +210,7 @@ export async function extractProfile(resumeText: string) {
     );
     if (response.code !== 0)
       throw new Error(response.stderr.trim() || "Não foi possível importar o currículo.");
+    report?.("result_received");
     return profileDraftSchema.parse(JSON.parse(await fs.readFile(resultPath, "utf8")));
   } finally {
     await fs.rm(temp, { recursive: true, force: true });
