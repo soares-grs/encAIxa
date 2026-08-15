@@ -1,0 +1,36 @@
+{
+  "name": "Pessoa Exemplo",
+  "title": "Desenvolvedor(a) de Software",
+  "subtitle": "Backend | APIs | Sistemas Distribuídos",
+  "contact": {
+    "email": "pessoa@example.com",
+    "phone": "+55 (00) 00000-0000",
+    "linkedin": "linkedin.com/in/pessoa-exemplo",
+    "github": "github.com/pessoa-exemplo",
+    "location": "Brasil"
+  },
+  "summary": "Profissional de software com experiência no desenvolvimento de aplicações e integração de sistemas.",
+  "skills": ["JavaScript", "APIs REST", "SQL", "Git"],
+  "experience": [
+    {
+      "title": "Desenvolvedor(a) de Software",
+      "company": "Empresa Exemplo",
+      "period": "Janeiro/2024 - Atual",
+      "bullets": [
+        "Desenvolvimento e manutenção de APIs para integração de sistemas",
+        "Implementação de testes automatizados para fluxos críticos"
+      ]
+    }
+  ],
+  "education": [
+    {
+      "degree": "Análise e Desenvolvimento de Sistemas",
+      "institution": "Instituição Exemplo",
+      "period": "2024",
+      "status": "Concluído"
+    }
+  ],
+  "languages": [
+    { "language": "Inglês", "level": "Intermediário" }
+  ]
+}
