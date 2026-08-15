@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import {
   ArrowLeft,
   ArrowRight,
@@ -75,6 +75,14 @@ export default function Onboarding({
   const [busy, setBusy] = useState("");
   const [error, setError] = useState("");
 
+  useEffect(() => {
+    if (statuses[provider].installed && statuses[provider].authenticated) return;
+    const ready = (["codex", "claude"] as const).find(
+      (id) => statuses[id].installed && statuses[id].authenticated,
+    );
+    if (ready) setProvider(ready);
+  }, [provider, statuses]);
+
   const work = async (label: string, task: () => Promise<void>) => {
     setBusy(label);
     setError("");
@@ -118,9 +126,15 @@ export default function Onboarding({
     });
   const importFile = (file: File) =>
     work("Importando currículo...", async () => {
+      const isJson = file.name.toLowerCase().endsWith(".json");
+      const importProvider = ([provider, provider === "codex" ? "claude" : "codex"] as const).find(
+        (id) => statuses[id].installed && statuses[id].authenticated,
+      );
+      if (!isJson && !importProvider)
+        throw new Error("Conecte o Codex ou o Claude antes de importar este formato.");
       const form = new FormData();
       form.append("file", file);
-      form.append("provider", provider);
+      form.append("provider", importProvider || provider);
       const result = await api<{ profile: Profile; provider: ProviderId }>(
         "/api/onboarding/import",
         { method: "POST", body: form },

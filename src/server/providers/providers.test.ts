@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import path from "node:path";
 import { resolveCodexInvocation, runCodex } from "../codex.js";
 import {
+  buildClaudeStructuredArgs,
   createClaudeStreamParser,
   parseClaudeStructuredOutput,
   quoteClaudeShellArgument,
@@ -12,6 +13,13 @@ import { executeProvider, getProvider, requireReady } from "./index.js";
 import { ProviderError, type AiProvider } from "./types.js";
 
 describe("provedores de IA", () => {
+  it("usa apenas flags documentadas na execução estruturada do Claude", () => {
+    const args = buildClaudeStructuredArgs({ type: "object" });
+    expect(args).not.toContain("--safe-mode");
+    expect(args).not.toContain("--tools");
+    expect(args).toContain("--permission-mode");
+    expect(args).toContain("--disallowedTools");
+  });
   it("preserva argumentos e stdin ao executar CLIs sem shell", async () => {
     const fixture = path.resolve("src/server/providers/fixtures/fake-cli.mjs");
     const invocation = (args: string[]) => ({

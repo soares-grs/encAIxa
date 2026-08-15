@@ -200,22 +200,7 @@ async function structured(prompt: string, schema: object, report?: ProviderActiv
     let resultEvent: any;
     let assistantEvents = 0;
     const response = await runClaudeStream(
-      [
-        "-p",
-        "--output-format",
-        "stream-json",
-        "--verbose",
-        "--json-schema",
-        JSON.stringify(schema),
-        "--no-session-persistence",
-        "--safe-mode",
-        "--tools",
-        "",
-        "--disallowedTools",
-        "mcp__*",
-        "--permission-mode",
-        "plan",
-      ],
+      buildClaudeStructuredArgs(schema),
       prompt,
       180_000,
       temp,
@@ -242,6 +227,36 @@ async function structured(prompt: string, schema: object, report?: ProviderActiv
   } finally {
     await fs.rm(temp, { recursive: true, force: true });
   }
+}
+
+const disallowedClaudeTools = [
+  "Bash",
+  "Edit",
+  "Write",
+  "Read",
+  "Glob",
+  "Grep",
+  "WebFetch",
+  "WebSearch",
+  "Task",
+  "NotebookEdit",
+  "mcp__*",
+].join(",");
+
+export function buildClaudeStructuredArgs(schema: object) {
+  return [
+    "-p",
+    "--output-format",
+    "stream-json",
+    "--verbose",
+    "--json-schema",
+    JSON.stringify(schema),
+    "--no-session-persistence",
+    "--disallowedTools",
+    disallowedClaudeTools,
+    "--permission-mode",
+    "plan",
+  ];
 }
 
 export const claudeProvider: AiProvider = {

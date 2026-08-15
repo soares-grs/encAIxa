@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import Onboarding, { type OnboardingState } from "./Onboarding";
@@ -84,5 +84,38 @@ describe("Onboarding", () => {
     });
     await userEvent.upload(screen.getByLabelText(/Selecione ou arraste/), file);
     expect(await screen.findByText("Tudo pronto para revisar")).toBeInTheDocument();
+  });
+  it("usa o Claude conectado quando o Codex não está instalado", async () => {
+    const fetchMock = vi.fn((_input: RequestInfo | URL, options?: RequestInit) =>
+      Promise.resolve(
+        new Response(
+          JSON.stringify({
+            profile: { ...emptyProfile, name: "Ana", title: "Dev", summary: "Resumo" },
+            provider: "claude",
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        ),
+      ),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    render(
+      <Onboarding
+        initial={initial}
+        statuses={{
+          codex: { ...statuses.codex, installed: false, authenticated: false },
+          claude: { ...statuses.claude, installed: true, authenticated: true },
+        }}
+        refreshStatuses={vi.fn()}
+        onComplete={vi.fn()}
+      />,
+    );
+    await userEvent.click(screen.getByRole("button", { name: /Importar meu currículo/ }));
+    await userEvent.upload(
+      screen.getByLabelText(/Selecione ou arraste/),
+      new File(["currículo de exemplo"], "perfil.txt", { type: "text/plain" }),
+    );
+    await waitFor(() => expect(fetchMock).toHaveBeenCalled());
+    const body = fetchMock.mock.calls[0][1]?.body as FormData;
+    expect(body.get("provider")).toBe("claude");
   });
 });
