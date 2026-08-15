@@ -2,14 +2,7 @@
   "$schema": "http://json-schema.org/draft-07/schema#",
   "type": "object",
   "additionalProperties": false,
-  "required": [
-    "role",
-    "company",
-    "requirements",
-    "relevantSkills",
-    "gaps",
-    "suggestions"
-  ],
+  "required": ["role", "company", "requirements", "relevantSkills", "gaps", "suggestions"],
   "properties": {
     "role": {
       "type": "string"
@@ -22,13 +15,7 @@
       "items": {
         "type": "object",
         "additionalProperties": false,
-        "required": [
-          "id",
-          "text",
-          "kind",
-          "matched",
-          "evidence"
-        ],
+        "required": ["id", "text", "kind", "matched", "evidence"],
         "properties": {
           "id": {
             "type": "string"
@@ -37,10 +24,7 @@
             "type": "string"
           },
           "kind": {
-            "enum": [
-              "required",
-              "preferred"
-            ]
+            "enum": ["required", "preferred"]
           },
           "matched": {
             "type": "boolean"
@@ -71,25 +55,13 @@
       "items": {
         "type": "object",
         "additionalProperties": false,
-        "required": [
-          "id",
-          "type",
-          "target",
-          "original",
-          "proposed",
-          "reason",
-          "evidenceRefs"
-        ],
+        "required": ["id", "type", "target", "original", "proposed", "reason", "evidenceRefs"],
         "properties": {
           "id": {
             "type": "string"
           },
           "type": {
-            "enum": [
-              "summary",
-              "bullet",
-              "skills"
-            ]
+            "enum": ["summary", "bullet", "skills"]
           },
           "target": {
             "type": "string"

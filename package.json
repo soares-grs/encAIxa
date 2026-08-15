@@ -9,6 +9,8 @@
     "dev": "concurrently -k \"tsx watch src/server/index.ts\" \"vite --host 127.0.0.1\"",
     "start": "npm run build && tsx src/server/index.ts",
     "build": "tsc --noEmit && vite build",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
     "test": "vitest run --config vitest.config.ts"
   },
   "dependencies": {
@@ -49,6 +51,7 @@
     "@vitejs/plugin-react": "^5.0.2",
     "concurrently": "^9.2.1",
     "jsdom": "^30.0.1",
+    "prettier": "^3.9.6",
     "tsx": "^4.20.5",
     "typescript": "^5.9.2",
     "vite": "^7.1.4",

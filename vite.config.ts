@@ -8,5 +8,5 @@ export default defineConfig({
   root: "src/client",
   resolve: { alias: { "@": path.resolve(__dirname, "src/client") } },
   build: { outDir: "../../dist", emptyOutDir: true },
-  server: { port: 5173, proxy: { "/api": "http://127.0.0.1:3001" } }
+  server: { port: 5173, proxy: { "/api": "http://127.0.0.1:3001" } },
 });

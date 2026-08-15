@@ -26,13 +26,7 @@
     "contact": {
       "type": "object",
       "additionalProperties": false,
-      "required": [
-        "email",
-        "phone",
-        "linkedin",
-        "github",
-        "location"
-      ],
+      "required": ["email", "phone", "linkedin", "github", "location"],
       "properties": {
         "email": {
           "type": "string"
@@ -65,12 +59,7 @@
       "items": {
         "type": "object",
         "additionalProperties": false,
-        "required": [
-          "title",
-          "company",
-          "period",
-          "bullets"
-        ],
+        "required": ["title", "company", "period", "bullets"],
         "properties": {
           "title": {
             "type": "string"
@@ -95,12 +84,7 @@
       "items": {
         "type": "object",
         "additionalProperties": false,
-        "required": [
-          "degree",
-          "institution",
-          "period",
-          "status"
-        ],
+        "required": ["degree", "institution", "period", "status"],
         "properties": {
           "degree": {
             "type": "string"
@@ -122,10 +106,7 @@
       "items": {
         "type": "object",
         "additionalProperties": false,
-        "required": [
-          "language",
-          "level"
-        ],
+        "required": ["language", "level"],
         "properties": {
           "language": {
             "type": "string"

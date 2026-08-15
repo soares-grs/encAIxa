@@ -30,7 +30,5 @@
       "status": "Concluído"
     }
   ],
-  "languages": [
-    { "language": "Inglês", "level": "Intermediário" }
-  ]
+  "languages": [{ "language": "Inglês", "level": "Intermediário" }]
 }
