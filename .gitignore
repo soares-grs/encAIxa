@@ -2,5 +2,7 @@ node_modules/
 dist/
 storage/
 *.log
+playwright-report/
+test-results/
 .env
 .DS_Store

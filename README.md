@@ -32,7 +32,7 @@ Você não precisa conhecer React, TypeScript ou qualquer outra tecnologia do pr
 ### 1. Instale os programas necessários
 
 - [Node.js](https://nodejs.org/) 22 ou mais recente;
-- [Google Chrome](https://www.google.com/chrome/) ou Microsoft Edge;
+- um navegador atualizado: Chrome, Edge, Brave, Opera ou Firefox;
 - pelo menos um provedor de IA: Codex ou Claude Code.
 
 Para instalar o Codex:
@@ -75,6 +75,27 @@ encAIxa: http://127.0.0.1:3001
 
 > [!TIP]
 > No PowerShell, se o Windows bloquear `npm.ps1`, use `npm.cmd install` e `npm.cmd start`. Não é necessário alterar a política de segurança do computador.
+
+### Linux (Ubuntu 24.04 LTS)
+
+Instale o Node.js 22 ou mais recente e pelo menos um dos CLIs de IA. Depois, dentro da pasta do projeto, execute os mesmos comandos:
+
+```bash
+npm install
+npm start
+```
+
+Codex e Claude são executados diretamente pelo `PATH` no Linux; o encAIxa não chama PowerShell nem arquivos `.cmd` nesse sistema. Confirme a instalação com `codex --version` ou `claude --version`. Se o comando funcionar em um terminal mas não no encAIxa, encerre a aplicação e abra um terminal novo para atualizar o `PATH`.
+
+O Chrome baixado pelo Puppeteer é usado somente no servidor para gerar PDFs. Você pode abrir a interface normalmente no Firefox, Brave ou Opera.
+
+## Navegadores suportados
+
+- Chrome e Edge, nas versões estáveis atuais;
+- Brave e Opera, cobertos pelo mesmo motor Chromium e verificados manualmente antes dos releases;
+- Firefox, validado por testes automatizados próprios.
+
+O navegador da interface não precisa ser o mesmo usado internamente para gerar o PDF.
 
 ## Primeiro uso
 
@@ -155,13 +176,25 @@ Depois, atualize a página da aplicação.
 
 ### O PDF não foi gerado
 
-Confirme que Chrome ou Edge está instalado. Para utilizar outro executável compatível, defina `PUPPETEER_EXECUTABLE_PATH` com o caminho completo antes de iniciar o encAIxa.
+Execute `npm install` novamente para baixar o Chrome gerenciado pelo Puppeteer. O encAIxa também reconhece instalações comuns de Chrome, Edge, Chromium, Brave e Opera no Windows e no Linux. Para utilizar outro executável Chromium compatível, defina `PUPPETEER_EXECUTABLE_PATH` com o caminho completo antes de iniciar o encAIxa.
 
 Exemplo no PowerShell:
 
 ```powershell
 $env:PUPPETEER_EXECUTABLE_PATH="C:\Program Files\Google\Chrome\Application\chrome.exe"
 npm.cmd start
+```
+
+No Linux:
+
+```bash
+PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium npm start
+```
+
+Se o navegador for encontrado, mas reclamar de bibliotecas compartilhadas no Ubuntu, instale as dependências indicadas pelo próprio Puppeteer com:
+
+```bash
+npx puppeteer browsers install chrome --install-deps
 ```
 
 ### A porta 3001 já está em uso
@@ -190,6 +223,7 @@ O tempo depende do provedor e do tamanho do perfil e da vaga. A tela mostra even
 | `npm run dev`          | Inicia servidor e interface com recarregamento automático |
 | `npm start`            | Gera o build e inicia a aplicação em `127.0.0.1:3001`     |
 | `npm test`             | Executa todos os testes uma vez                           |
+| `npm run test:e2e`     | Valida a interface em Chromium e Firefox                  |
 | `npm run build`        | Verifica TypeScript e gera o build de produção            |
 | `npm run format`       | Formata o projeto com Prettier                            |
 | `npm run format:check` | Confere a formatação sem alterar arquivos                 |

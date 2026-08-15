@@ -23,6 +23,17 @@ import { ProviderError, type AiProvider, type ProviderActivityReporter } from ".
 
 type ClaudeInvocation = { command: string; args: string[]; shell: boolean };
 
+function processError(error: unknown) {
+  const code = (error as NodeJS.ErrnoException)?.code;
+  if (code === "ENOENT")
+    return new ProviderError(
+      "Claude CLI não foi encontrado no PATH. Instale-o e reinicie o encAIxa.",
+      502,
+    );
+  if (code === "EACCES") return new ProviderError("Sem permissão para executar o Claude CLI.", 502);
+  return error;
+}
+
 export const quoteClaudeShellArgument = (arg: string) =>
   arg === "" || /[\s"{}[\]^&|<>()]/.test(arg) ? `"${arg.replace(/(\\*)"/g, '$1$1\\"')}"` : arg;
 
@@ -59,9 +70,10 @@ export function runClaude(
   input = "",
   timeout = 15_000,
   cwd?: string,
+  resolveInvocation: (args: string[]) => ClaudeInvocation = resolveClaudeInvocation,
 ): Promise<{ code: number; stdout: string; stderr: string }> {
   return new Promise((resolve, reject) => {
-    const invocation = resolveClaudeInvocation(args);
+    const invocation = resolveInvocation(args);
     const child = spawn(invocation.command, invocation.args, {
       windowsHide: true,
       shell: invocation.shell,
@@ -77,7 +89,7 @@ export function runClaude(
     child.stderr.on("data", (data) => (stderr += data));
     child.on("error", (error) => {
       clearTimeout(timer);
-      reject(error);
+      reject(processError(error));
     });
     child.on("close", (code) => {
       clearTimeout(timer);
@@ -167,7 +179,7 @@ function runClaudeStream(
     child.stderr.on("data", (data) => (stderr += data));
     child.on("error", (error) => {
       clearTimeout(timer);
-      reject(error);
+      reject(processError(error));
     });
     child.on("close", (code) => {
       clearTimeout(timer);
@@ -271,7 +283,8 @@ export const claudeProvider: AiProvider = {
     child.stdout.on("data", (data) => (loginOutput += data.toString()));
     child.stderr.on("data", (data) => (loginOutput += data.toString()));
     child.on("error", (error) => {
-      loginOutput += `\n${error.message}`;
+      const normalized = processError(error);
+      loginOutput += `\n${normalized instanceof Error ? normalized.message : String(normalized)}`;
       loginRunning = false;
     });
     child.on("close", (code) => {

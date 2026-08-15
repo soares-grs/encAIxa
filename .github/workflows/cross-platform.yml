@@ -1,0 +1,32 @@
+name: Cross-platform
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-24.04]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npx puppeteer browsers install chrome --install-deps
+        if: runner.os == 'Linux'
+      - run: npx puppeteer browsers install chrome
+        if: runner.os == 'Windows'
+      - run: npm test
+      - run: npm run build
+      - run: npx playwright install --with-deps chromium firefox
+        if: runner.os == 'Linux'
+      - run: npx playwright install chromium firefox
+        if: runner.os == 'Windows'
+      - run: npm run test:e2e

@@ -17,22 +17,47 @@ import {
   translationPrompt,
 } from "./providers/prompts.js";
 
-const windowsCodex = path.join(process.env.APPDATA || "", "npm", "codex.cmd");
-const command =
-  process.platform === "win32" && existsSync(windowsCodex)
-    ? windowsCodex
-    : process.platform === "win32"
-      ? "codex.cmd"
-      : "codex";
+type CodexInvocation = { command: string; args: string[]; shell: boolean };
+
+export function resolveCodexInvocation(
+  args: string[],
+  platform = process.platform,
+  env: NodeJS.ProcessEnv = process.env,
+  fileExists: (file: string) => boolean = existsSync,
+): CodexInvocation {
+  if (platform !== "win32") return { command: "codex", args, shell: false };
+  const npmCommand = path.join(env.APPDATA || "", "npm", "codex.cmd");
+  return {
+    command: fileExists(npmCommand) ? npmCommand : "codex.cmd",
+    args,
+    shell: true,
+  };
+}
+
+function processError(error: unknown) {
+  const code = (error as NodeJS.ErrnoException)?.code;
+  if (code === "ENOENT")
+    return new ProviderError(
+      "Codex CLI não foi encontrado no PATH. Instale-o e reinicie o encAIxa.",
+      502,
+    );
+  if (code === "EACCES") return new ProviderError("Sem permissão para executar o Codex CLI.", 502);
+  return error;
+}
 let loginOutput = "";
 let loginRunning = false;
-function run(
+export function runCodex(
   args: string[],
   input = "",
   timeout = 15_000,
+  resolveInvocation: (args: string[]) => CodexInvocation = resolveCodexInvocation,
 ): Promise<{ code: number; stdout: string; stderr: string }> {
   return new Promise((resolve, reject) => {
-    const child = spawn(command, args, { windowsHide: true, shell: process.platform === "win32" });
+    const invocation = resolveInvocation(args);
+    const child = spawn(invocation.command, invocation.args, {
+      windowsHide: true,
+      shell: invocation.shell,
+    });
     let stdout = "",
       stderr = "";
     const timer = setTimeout(() => {
@@ -43,7 +68,7 @@ function run(
     child.stderr.on("data", (d) => (stderr += d));
     child.on("error", (e) => {
       clearTimeout(timer);
-      reject(e);
+      reject(processError(e));
     });
     child.on("close", (code) => {
       clearTimeout(timer);
@@ -55,8 +80,8 @@ function run(
 }
 export async function codexStatus() {
   try {
-    const version = await run(["--version"]);
-    const status = await run(["login", "status"]);
+    const version = await runCodex(["--version"]);
+    const status = await runCodex(["login", "status"]);
     return {
       installed: true,
       authenticated: status.code === 0,
@@ -72,14 +97,16 @@ export function startLogin() {
   if (loginRunning) return;
   loginRunning = true;
   loginOutput = "Iniciando autenticação...\n";
-  const child = spawn(command, ["login", "--device-auth"], {
+  const invocation = resolveCodexInvocation(["login", "--device-auth"]);
+  const child = spawn(invocation.command, invocation.args, {
     windowsHide: true,
-    shell: process.platform === "win32",
+    shell: invocation.shell,
   });
   child.stdout.on("data", (d) => (loginOutput += d.toString()));
   child.stderr.on("data", (d) => (loginOutput += d.toString()));
   child.on("error", (e) => {
-    loginOutput += `\n${e.message}`;
+    const error = processError(e);
+    loginOutput += `\n${error instanceof Error ? error.message : String(error)}`;
     loginRunning = false;
   });
   child.on("close", () => (loginRunning = false));
@@ -112,7 +139,7 @@ export async function optimize(
     ];
     report?.("session_started");
     report?.("response_in_progress");
-    const response = await run(args, prompt, 180_000);
+    const response = await runCodex(args, prompt, 180_000);
     if (response.code !== 0)
       throw new Error(response.stderr.trim() || "O Codex não conseguiu concluir a análise.");
     report?.("result_received");
@@ -126,7 +153,7 @@ export async function translateProfile(profile: Profile) {
   const resultPath = path.join(temp, "result.json");
   const prompt = translationPrompt(profile);
   try {
-    const response = await run(
+    const response = await runCodex(
       [
         "exec",
         "--ephemeral",
@@ -159,7 +186,7 @@ export async function extractProfile(resumeText: string) {
   const temp = await fs.mkdtemp(path.join(os.tmpdir(), "encaixa-profile-import-"));
   const resultPath = path.join(temp, "result.json");
   try {
-    const response = await run(
+    const response = await runCodex(
       [
         "exec",
         "--ephemeral",
@@ -190,7 +217,7 @@ export async function fillGap(input: Parameters<typeof gapFillPrompt>[0]) {
   const temp = await fs.mkdtemp(path.join(os.tmpdir(), "encaixa-gap-"));
   const resultPath = path.join(temp, "result.json");
   try {
-    const response = await run(
+    const response = await runCodex(
       [
         "exec",
         "--ephemeral",

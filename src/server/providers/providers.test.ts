@@ -1,15 +1,57 @@
 import { describe, expect, it } from "vitest";
 import path from "node:path";
+import { resolveCodexInvocation, runCodex } from "../codex.js";
 import {
   createClaudeStreamParser,
   parseClaudeStructuredOutput,
   quoteClaudeShellArgument,
   resolveClaudeInvocation,
+  runClaude,
 } from "./claude.js";
 import { executeProvider, getProvider, requireReady } from "./index.js";
 import { ProviderError, type AiProvider } from "./types.js";
 
 describe("provedores de IA", () => {
+  it("preserva argumentos e stdin ao executar CLIs sem shell", async () => {
+    const fixture = path.resolve("src/server/providers/fixtures/fake-cli.mjs");
+    const invocation = (args: string[]) => ({
+      command: process.execPath,
+      args: [fixture, ...args],
+      shell: false,
+    });
+    const [codex, claude] = await Promise.all([
+      runCodex(["exec", "valor com espaço"], "entrada codex", 5_000, invocation),
+      runClaude(["-p", "valor com espaço"], "entrada claude", 5_000, undefined, invocation),
+    ]);
+    expect(JSON.parse(codex.stdout)).toEqual({
+      args: ["exec", "valor com espaço"],
+      input: "entrada codex",
+    });
+    expect(JSON.parse(claude.stdout)).toEqual({
+      args: ["-p", "valor com espaço"],
+      input: "entrada claude",
+    });
+  });
+  it("executa o Codex diretamente no Linux sem shell", () => {
+    expect(resolveCodexInvocation(["--version"], "linux", {}, () => false)).toEqual({
+      command: "codex",
+      args: ["--version"],
+      shell: false,
+    });
+  });
+  it("usa o shim npm do Codex somente no Windows", () => {
+    const invocation = resolveCodexInvocation(
+      ["login", "status"],
+      "win32",
+      { APPDATA: "C:\\npm" },
+      (file) => file.endsWith("codex.cmd"),
+    );
+    expect(invocation).toEqual({
+      command: path.join("C:\\npm", "npm", "codex.cmd"),
+      args: ["login", "status"],
+      shell: true,
+    });
+  });
   it("extrai a saída estruturada do envelope do Claude", () => {
     expect(
       parseClaudeStructuredOutput(

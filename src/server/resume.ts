@@ -1,6 +1,7 @@
 import fs from "node:fs/promises";
 import { existsSync } from "node:fs";
 import path from "node:path";
+import os from "node:os";
 import puppeteer from "puppeteer";
 import { PDFParse } from "pdf-parse";
 import type { Decision, Optimization, Profile } from "../shared/schemas.js";
@@ -86,23 +87,76 @@ export async function renderResume(
   return `<!doctype html><html lang="${lang === "en" ? "en" : "pt-BR"}"><head><meta charset="utf-8"><style>${resumeCss}</style></head><body><main><div class="top"><h1>${escape(p.name)}</h1><h2>${escape(lang === "en" ? "Software Engineer" : p.title)}</h2><p>${contacts}</p></div><section><h2>${l.summary}</h2><p class="summary">${escape(p.summary)}</p></section><section><h2>${l.skills}</h2><p class="skills">${relevant.map(escape).join(" · ")}</p></section><section><h2>${l.experience}</h2>${jobs}</section><section><h2>${l.education}</h2>${education}${languages}</section></main></body></html>`;
 }
 const resumeCss = `@page{size:A4;margin:12mm 15mm}*{box-sizing:border-box}body{margin:0;font:9.2pt/1.35 Arial,sans-serif;color:#242424}main{max-width:180mm;margin:auto}.top{text-align:center;border-bottom:2px solid #202020;padding-bottom:8px;margin-bottom:11px}.top h1{font-size:18pt;letter-spacing:.7px;margin:0}.top h2{font-size:10.5pt;font-weight:400;margin:3px}.top p{font-size:8.4pt;color:#555;margin:0}section{margin-bottom:10px}section>h2{font-size:10pt;border-bottom:1px solid #bbb;margin:0 0 6px;padding-bottom:2px}.summary,.skills{margin:0;text-align:justify}.job{margin-bottom:8px;break-inside:avoid}.job header{display:flex;justify-content:space-between}.job h3{display:inline;font-size:9.6pt;margin:0}.job header span{font-style:italic;color:#555;margin-left:7px}.job time{font-size:8.7pt;color:#555}.job ul{margin:3px 0 0 15px;padding:0}.job li{margin-bottom:1px}.edu{break-inside:avoid}.edu span{float:right}.edu p{margin:1px 0 4px;color:#555;font-style:italic}`;
-function executablePath() {
+export async function resolvePdfBrowserExecutable(
+  platform = process.platform,
+  env: NodeJS.ProcessEnv = process.env,
+  fileExists: (file: string) => boolean = existsSync,
+  bundledExecutable: () => string | Promise<string> = () => puppeteer.executablePath(),
+) {
+  const configured = env.PUPPETEER_EXECUTABLE_PATH;
+  if (configured) {
+    if (fileExists(configured)) return configured;
+    throw new Error(`PUPPETEER_EXECUTABLE_PATH aponta para um arquivo inexistente: ${configured}`);
+  }
+  try {
+    const bundled = await bundledExecutable();
+    if (bundled && fileExists(bundled)) return bundled;
+  } catch {}
   const candidates =
-    process.platform === "win32"
+    platform === "win32"
       ? [
-          "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe",
-          "C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe",
-          "C:\\Program Files\\Microsoft\\Edge\\Application\\msedge.exe",
-          "C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe",
+          path.join(
+            env.PROGRAMFILES || "C:\\Program Files",
+            "Google",
+            "Chrome",
+            "Application",
+            "chrome.exe",
+          ),
+          path.join(
+            env["PROGRAMFILES(X86)"] || "C:\\Program Files (x86)",
+            "Google",
+            "Chrome",
+            "Application",
+            "chrome.exe",
+          ),
+          path.join(
+            env.PROGRAMFILES || "C:\\Program Files",
+            "Microsoft",
+            "Edge",
+            "Application",
+            "msedge.exe",
+          ),
+          path.join(
+            env.LOCALAPPDATA || "",
+            "BraveSoftware",
+            "Brave-Browser",
+            "Application",
+            "brave.exe",
+          ),
+          path.join(env.LOCALAPPDATA || "", "Programs", "Opera", "opera.exe"),
         ]
-      : [];
-  return process.env.PUPPETEER_EXECUTABLE_PATH || candidates.find((p) => existsSync(p));
+      : platform === "linux"
+        ? [
+            "/usr/bin/google-chrome-stable",
+            "/usr/bin/google-chrome",
+            "/usr/bin/chromium",
+            "/usr/bin/chromium-browser",
+            "/usr/bin/microsoft-edge",
+            "/usr/bin/brave-browser",
+            "/usr/bin/opera",
+          ]
+        : [];
+  const executable = candidates.find((candidate) => candidate && fileExists(candidate));
+  if (executable) return executable;
+  throw new Error(
+    "Nenhum navegador Chromium foi encontrado para gerar o PDF. Execute npm install novamente ou defina PUPPETEER_EXECUTABLE_PATH.",
+  );
 }
 export async function generatePdf(html: string, outputPath: string) {
   await fs.mkdir(path.dirname(outputPath), { recursive: true });
   const browser = await puppeteer.launch({
     headless: true,
-    executablePath: executablePath(),
+    executablePath: await resolvePdfBrowserExecutable(),
     args: ["--disable-gpu"],
   });
   try {
