@@ -112,4 +112,75 @@ describe("App", () => {
     expect(await screen.findByRole("button", { name: /Claude Anthropic/ })).toBeInTheDocument();
     expect(screen.getByText("Desconectado")).toBeInTheDocument();
   });
+  it("restaura a etapa, idiomas e arquivos de uma candidatura do histórico", async () => {
+    const baseFetch = fetch as ReturnType<typeof vi.fn>;
+    baseFetch.mockImplementation((input: RequestInfo | URL) => {
+      const url = String(input);
+      const workflow = {
+        version: 1,
+        step: 4,
+        provider: "claude",
+        languages: ["ptbr", "en"],
+        files: [
+          {
+            name: "encaixa-en.pdf",
+            url: "/api/jobs/job-1/download/encaixa-en.pdf",
+            pages: 2,
+            lang: "en",
+          },
+        ],
+        updatedAt: "2026-01-02T00:00:00.000Z",
+      };
+      const data =
+        url === "/api/profile"
+          ? profile
+          : url === "/api/onboarding"
+            ? { completed: true, profile, completedAt: "2026-01-01" }
+            : url === "/api/providers/status"
+              ? {
+                  codex: { ...emptyStatus, authenticated: true },
+                  claude: { ...emptyStatus, authenticated: true },
+                }
+              : url === "/api/jobs/job-1"
+                ? {
+                    id: "job-1",
+                    company: "Acme",
+                    role: "Dev",
+                    text: "Descrição completa para a vaga",
+                    workflow,
+                    analysis: null,
+                    decisions: [],
+                    files: workflow.files,
+                    profileSnapshot: profile,
+                  }
+                : [{ id: "job-1", company: "Acme", role: "Dev", text: "Vaga", workflow }];
+      return Promise.resolve(
+        new Response(JSON.stringify(data), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        }),
+      );
+    });
+    render(
+      <ThemeProvider>
+        <App />
+      </ThemeProvider>,
+    );
+    const historyRole = await screen.findByText("Dev");
+    await userEvent.click(historyRole.closest("button")!);
+    expect(await screen.findByRole("heading", { name: "Prévia e arquivos finais" })).toBeVisible();
+    expect(screen.getByRole("link", { name: "Baixar encaixa-en.pdf" })).toHaveAttribute(
+      "href",
+      "/api/jobs/job-1/download/encaixa-en.pdf",
+    );
+    expect(screen.getByLabelText("Inglês")).toBeChecked();
+  });
 });
+
+const emptyStatus = {
+  installed: true,
+  authenticated: false,
+  loginRunning: false,
+  loginOutput: "",
+  version: "1.0",
+};

@@ -33,10 +33,15 @@ import {
   readDecisions,
   readJob,
   readProfile,
+  readProfileSnapshot,
+  readWorkflow,
   saveAnalysis,
   saveOnboardingDraft,
   saveDecisions,
   saveJob,
+  saveProfileSnapshot,
+  updateWorkflow,
+  invalidateJobDerived,
   writeProfile,
   completeOnboarding,
 } from "./storage.js";
@@ -149,8 +154,10 @@ app.post(
       .object({ company: z.string().min(1), role: z.string().min(1), text: z.string().min(20) })
       .parse(req.body);
     const id = makeJobId(body.company, body.role);
-    await saveJob(id, { ...body, createdAt: new Date().toISOString() });
-    res.status(201).json({ id, ...body });
+    const createdAt = new Date().toISOString();
+    await saveJob(id, { ...body, createdAt });
+    const workflow = await readWorkflow(id);
+    res.status(201).json({ id, ...body, createdAt, workflow });
   }),
 );
 app.get(
@@ -163,7 +170,43 @@ app.get(
       analysis = await readAnalysis(req.params.id);
       decisions = await readDecisions(req.params.id);
     } catch {}
-    res.json({ id: req.params.id, ...job, analysis, decisions });
+    const workflow = await readWorkflow(req.params.id);
+    const profileSnapshot = analysis ? await readProfileSnapshot(req.params.id) : null;
+    res.json({
+      id: req.params.id,
+      ...job,
+      analysis: analysis ? { ...analysis, score: score(analysis.requirements) } : null,
+      decisions,
+      workflow,
+      files: workflow.files,
+      profileSnapshot,
+    });
+  }),
+);
+app.put(
+  "/api/jobs/:id",
+  wrap(async (req: any, res: any) => {
+    const body = z
+      .object({
+        company: z.string().min(1),
+        role: z.string().min(1),
+        text: z.string().min(20),
+        invalidate: z.boolean().default(false),
+      })
+      .parse(req.body);
+    const current = await readJob(req.params.id);
+    const workflow = await readWorkflow(req.params.id);
+    if (workflow.step > 2 && !body.invalidate)
+      throw new ProviderError("Confirme a reanálise antes de alterar uma vaga analisada.", 409);
+    await saveJob(req.params.id, {
+      ...current,
+      company: body.company,
+      role: body.role,
+      text: body.text,
+      updatedAt: new Date().toISOString(),
+    });
+    if (body.invalidate) await invalidateJobDerived(req.params.id);
+    res.json({ id: req.params.id, ...(await readJob(req.params.id)) });
   }),
 );
 app.post(
@@ -233,7 +276,7 @@ app.post(
     const input = gapContextSchema.parse(req.body);
     const [analysis, profile, job] = await Promise.all([
       readAnalysis(req.params.id),
-      readProfile(),
+      readProfileSnapshot(req.params.id),
       readJob(req.params.id),
     ]);
     const gap = analysis.gaps[input.gapIndex];
@@ -261,7 +304,7 @@ app.post(
       .parse(req.body);
     const [analysis, profile, decisions] = await Promise.all([
       readAnalysis(req.params.id),
-      readProfile(),
+      readProfileSnapshot(req.params.id),
       readDecisions(req.params.id),
     ]);
     if (analysis.gaps[input.gapIndex] !== input.gap)
@@ -312,6 +355,42 @@ app.put(
     res.json(decisions);
   }),
 );
+app.put(
+  "/api/jobs/:id/decisions/:suggestionId",
+  wrap(async (req: any, res: any) => {
+    const accepted = z.object({ accepted: z.boolean() }).parse(req.body).accepted;
+    const analysis = await readAnalysis(req.params.id);
+    if (!analysis.suggestions.some((suggestion) => suggestion.id === req.params.suggestionId))
+      throw new ProviderError("Sugestão não encontrada nesta candidatura.", 409);
+    const decisions = await readDecisions(req.params.id);
+    const updated = [
+      ...decisions.filter((decision) => decision.suggestionId !== req.params.suggestionId),
+      { suggestionId: req.params.suggestionId, accepted },
+    ];
+    await saveDecisions(req.params.id, updated);
+    res.json(updated);
+  }),
+);
+app.patch(
+  "/api/jobs/:id/workflow",
+  wrap(async (req: any, res: any) => {
+    const patch = z
+      .object({
+        step: z.union([z.literal(2), z.literal(3), z.literal(4)]).optional(),
+        languages: z
+          .array(z.enum(["ptbr", "en"]))
+          .min(1)
+          .optional(),
+      })
+      .parse(req.body);
+    res.json(
+      await updateWorkflow(req.params.id, {
+        ...patch,
+        ...(patch.step === 4 ? { reviewedAt: new Date().toISOString() } : {}),
+      }),
+    );
+  }),
+);
 app.get(
   "/api/jobs/:id/preview/:lang",
   wrap(async (req: any, res: any) => {
@@ -320,7 +399,7 @@ app.get(
       .type("html")
       .send(
         await renderResume(
-          await readProfile(),
+          await readProfileSnapshot(req.params.id),
           lang,
           await readAnalysis(req.params.id),
           await readDecisions(req.params.id),
@@ -334,7 +413,7 @@ app.post(
     const langs = z
       .object({ languages: z.array(z.enum(["ptbr", "en"])).min(1) })
       .parse(req.body).languages;
-    const profile = await readProfile(),
+    const profile = await readProfileSnapshot(req.params.id),
       analysis = await readAnalysis(req.params.id),
       decisions = await readDecisions(req.params.id),
       job = await readJob(req.params.id);
@@ -356,13 +435,19 @@ app.post(
       const pages = await generatePdf(html, path.join(dir, name));
       files.push({ lang, name, pages, url: `/api/jobs/${req.params.id}/download/${name}` });
     }
+    await updateWorkflow(req.params.id, {
+      step: 4,
+      languages: langs,
+      files,
+      generatedAt: new Date().toISOString(),
+    });
     res.json({ files });
   }),
 );
 app.get(
   "/api/jobs/:id/download/:file",
   wrap(async (req: any, res: any) => {
-    if (!/^encaixa-(ptbr|en)\.(pdf|html)$/.test(req.params.file)) return res.sendStatus(400);
+    if (!/^(encaixa|cv)-(ptbr|en)\.(pdf|html)$/.test(req.params.file)) return res.sendStatus(400);
     res.download(path.join(paths.output, req.params.id, req.params.file));
   }),
 );
@@ -392,6 +477,7 @@ async function analyzeJob(
     message: `Confirmando que o ${providerId === "claude" ? "Claude" : "Codex"} está disponível e conectado.`,
   });
   const provider = await requireReady(getProvider(providerId));
+  await saveProfileSnapshot(id, profile);
   report({
     type: "progress",
     stage: "analyzing",
@@ -436,6 +522,16 @@ async function analyzeJob(
   });
   await saveJob(id, { ...job, provider: providerId });
   await saveAnalysis(id, analysis);
+  await saveDecisions(
+    id,
+    analysis.suggestions.map((suggestion) => ({ suggestionId: suggestion.id, accepted: false })),
+  );
+  await updateWorkflow(id, {
+    step: 3,
+    provider: providerId,
+    files: [],
+    analyzedAt: new Date().toISOString(),
+  });
   return result;
 }
 function score(requirements: any[]) {

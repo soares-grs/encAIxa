@@ -105,11 +105,30 @@ export const optimizationSchema = z.object({
   gaps: z.array(z.string()),
   suggestions: z.array(suggestionSchema),
 });
+export const outputFileSchema = z.object({
+  name: z.string(),
+  url: z.string(),
+  pages: z.number().int().nonnegative(),
+  lang: z.enum(["ptbr", "en"]),
+});
+export const jobWorkflowSchema = z.object({
+  version: z.literal(1),
+  step: z.union([z.literal(2), z.literal(3), z.literal(4)]),
+  provider: z.enum(["codex", "claude"]),
+  languages: z.array(z.enum(["ptbr", "en"])).min(1),
+  files: z.array(outputFileSchema),
+  updatedAt: z.string(),
+  analyzedAt: z.string().optional(),
+  reviewedAt: z.string().optional(),
+  generatedAt: z.string().optional(),
+});
 export type Profile = z.infer<typeof profileSchema>;
 export type ProfileDraft = z.infer<typeof profileDraftSchema>;
 export type Optimization = z.infer<typeof optimizationSchema>;
 export type Suggestion = z.infer<typeof suggestionSchema>;
 export type GapDraft = z.infer<typeof gapDraftSchema>;
+export type OutputFile = z.infer<typeof outputFileSchema>;
+export type JobWorkflow = z.infer<typeof jobWorkflowSchema>;
 export type Decision = { suggestionId: string; accepted: boolean };
 export type AnalysisStage =
   "preparing" | "checking_provider" | "analyzing" | "processing_result" | "saving";

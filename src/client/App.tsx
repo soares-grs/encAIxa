@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { Toaster, toast } from "sonner";
 import {
   AlertCircle,
@@ -36,6 +36,7 @@ import type {
   GapDraft,
   Optimization,
   Profile,
+  JobWorkflow,
 } from "../shared/schemas";
 import {
   Accordion,
@@ -81,6 +82,14 @@ type Job = {
   decisions?: Decision[];
   createdAt?: string;
   provider?: ProviderId;
+  workflow?: JobWorkflow;
+};
+type JobDetail = Job & {
+  analysis: (Optimization & { score?: number }) | null;
+  decisions: Decision[];
+  workflow: JobWorkflow;
+  files: OutputFile[];
+  profileSnapshot: Profile | null;
 };
 type ProviderId = "codex" | "claude";
 type ProviderStatus = {
@@ -145,6 +154,8 @@ export default function App() {
   const [profile, setProfile] = useState<Profile>(emptyProfile);
   const [job, setJob] = useState<Job>({ id: "", company: "", role: "", text: "" });
   const [analysis, setAnalysis] = useState<(Optimization & { score?: number }) | null>(null);
+  const [workflow, setWorkflow] = useState<JobWorkflow | null>(null);
+  const [applicationProfile, setApplicationProfile] = useState<Profile | null>(null);
   const [decisions, setDecisions] = useState<Record<string, boolean>>({});
   const [statuses, setStatuses] = useState<ProviderStatuses>({
     codex: emptyProviderStatus,
@@ -155,10 +166,12 @@ export default function App() {
   const [busy, setBusy] = useState("");
   const [error, setError] = useState("");
   const [files, setFiles] = useState<OutputFile[]>([]);
-  const [langs, setLangs] = useState<string[]>(["ptbr"]);
+  const [langs, setLangs] = useState<Array<"ptbr" | "en">>(["ptbr"]);
   const [onboarding, setOnboarding] = useState<OnboardingState | null>(null);
   const [bootstrapped, setBootstrapped] = useState(false);
   const [analysisRun, setAnalysisRun] = useState<AnalysisRun | null>(null);
+  const historyRequest = useRef(0);
+  const decisionSaveQueue = useRef(Promise.resolve());
   const load = () =>
     Promise.all([
       api<OnboardingState>("/api/onboarding"),
@@ -188,12 +201,12 @@ export default function App() {
       return () => clearTimeout(timer);
     }
   }, [statuses]);
-  const work = async (label: string, success: string, fn: () => Promise<void>) => {
+  const work = async (label: string, success: string, fn: () => Promise<void | false>) => {
     setBusy(label);
     setError("");
     try {
-      await fn();
-      if (success) toast.success(success);
+      const completed = await fn();
+      if (success && completed !== false) toast.success(success);
     } catch (e) {
       const message = e instanceof Error ? e.message : "Erro inesperado.";
       setError(message);
@@ -216,8 +229,39 @@ export default function App() {
     });
   const saveJob = () =>
     work("Salvando vaga...", "Vaga salva", async () => {
-      const saved = await api<Job>("/api/jobs", { method: "POST", body: JSON.stringify(job) });
+      const invalidate = Boolean(job.id && workflow && workflow.step > 2);
+      if (
+        invalidate &&
+        !window.confirm(
+          "Alterar esta vaga removerá a análise, as decisões e os arquivos gerados. Depois será necessário analisá-la novamente. Deseja continuar?",
+        )
+      )
+        return false;
+      const saved = await api<Job>(job.id ? `/api/jobs/${job.id}` : "/api/jobs", {
+        method: job.id ? "PUT" : "POST",
+        body: JSON.stringify({ ...job, invalidate }),
+      });
       setJob(saved);
+      setWorkflow(
+        saved.workflow ||
+          (workflow && !invalidate
+            ? workflow
+            : {
+                version: 1,
+                step: 2,
+                provider,
+                languages: ["ptbr"],
+                files: [],
+                updatedAt: new Date().toISOString(),
+              }),
+      );
+      if (invalidate) {
+        setAnalysis(null);
+        setDecisions({});
+        setFiles([]);
+        setApplicationProfile(null);
+        setLangs(["ptbr"]);
+      }
       setStep(2);
       await load();
     });
@@ -282,10 +326,21 @@ export default function App() {
         });
       });
       setJob((current) => ({ ...current, provider }));
+      setApplicationProfile(profile);
       setAnalysis(result);
       setDecisions(Object.fromEntries(result.suggestions.map((s) => [s.id, false])));
       setAnalysisRun(null);
+      setWorkflow((current) => ({
+        version: 1,
+        step: 3,
+        provider,
+        languages: current?.languages || ["ptbr"],
+        files: [],
+        updatedAt: new Date().toISOString(),
+        analyzedAt: new Date().toISOString(),
+      }));
       setStep(3);
+      void load();
       toast.success("Análise concluída");
     } catch (caught) {
       const message = caught instanceof Error ? caught.message : "A análise não foi concluída.";
@@ -305,7 +360,13 @@ export default function App() {
         suggestionId,
         accepted,
       }));
+      await decisionSaveQueue.current;
       await api(`/api/jobs/${job.id}/decisions`, { method: "PUT", body: JSON.stringify(list) });
+      const savedWorkflow = await api<JobWorkflow>(`/api/jobs/${job.id}/workflow`, {
+        method: "PATCH",
+        body: JSON.stringify({ step: 4 }),
+      });
+      setWorkflow(savedWorkflow);
       setStep(4);
     });
   const generate = () =>
@@ -315,10 +376,23 @@ export default function App() {
         body: JSON.stringify({ languages: langs }),
       });
       setFiles(out.files);
+      setWorkflow((current) =>
+        current
+          ? {
+              ...current,
+              step: 4,
+              files: out.files as JobWorkflow["files"],
+              languages: langs,
+            }
+          : current,
+      );
+      void load();
     });
   const startNextApplication = (target: "profile" | "job") => {
     setJob({ id: "", company: "", role: "", text: "" });
     setAnalysis(null);
+    setWorkflow(null);
+    setApplicationProfile(null);
     setDecisions({});
     setFiles([]);
     setLangs(["ptbr"]);
@@ -328,16 +402,51 @@ export default function App() {
   };
   const openHistory = (id: string) =>
     work("Abrindo candidatura...", "", async () => {
-      const saved = await api<Job>(`/api/jobs/${id}`);
+      const request = ++historyRequest.current;
+      const saved = await api<JobDetail>(`/api/jobs/${id}`);
+      if (request !== historyRequest.current) return;
       setJob(saved);
-      setProvider(saved.provider || "codex");
-      setAnalysis(saved.analysis ? { ...saved.analysis } : null);
+      setWorkflow(saved.workflow);
+      setApplicationProfile(saved.profileSnapshot);
+      setProvider(saved.workflow.provider || saved.provider || "codex");
+      setAnalysis(saved.analysis);
       setDecisions(
         Object.fromEntries((saved.decisions || []).map((d) => [d.suggestionId, d.accepted])),
       );
-      setFiles([]);
-      setStep(saved.analysis ? 3 : 2);
+      setFiles(saved.files);
+      setLangs(saved.workflow.languages);
+      setStep(saved.workflow.step);
     });
+  const saveDecision = async (suggestionId: string, accepted: boolean) => {
+    const previous = decisions[suggestionId];
+    setDecisions((current) => ({ ...current, [suggestionId]: accepted }));
+    try {
+      const save = () =>
+        api(`/api/jobs/${job.id}/decisions/${encodeURIComponent(suggestionId)}`, {
+          method: "PUT",
+          body: JSON.stringify({ accepted }),
+        }).then(() => undefined);
+      decisionSaveQueue.current = decisionSaveQueue.current.then(save, save);
+      await decisionSaveQueue.current;
+    } catch (caught) {
+      setDecisions((current) => ({ ...current, [suggestionId]: previous }));
+      toast.error(caught instanceof Error ? caught.message : "Não foi possível salvar a decisão.");
+    }
+  };
+  const saveLanguages = async (next: Array<"ptbr" | "en">) => {
+    const previous = langs;
+    setLangs(next);
+    try {
+      const saved = await api<JobWorkflow>(`/api/jobs/${job.id}/workflow`, {
+        method: "PATCH",
+        body: JSON.stringify({ languages: next }),
+      });
+      setWorkflow(saved);
+    } catch (caught) {
+      setLangs(previous);
+      toast.error(caught instanceof Error ? caught.message : "Não foi possível salvar os idiomas.");
+    }
+  };
   const login = (selectedProvider: ProviderId) =>
     work("Iniciando login...", "", async () => {
       await api(`/api/providers/${selectedProvider}/login`, { method: "POST" });
@@ -363,10 +472,10 @@ export default function App() {
     ) : step === 3 && analysis ? (
       <ReviewStep
         job={job}
-        profile={profile}
+        profile={applicationProfile || profile}
         analysis={analysis}
         decisions={decisions}
-        setDecisions={setDecisions}
+        setDecision={saveDecision}
         onGapConfirmed={(updatedAnalysis, updatedDecisions) => {
           setAnalysis(updatedAnalysis);
           setDecisions(
@@ -382,7 +491,7 @@ export default function App() {
       <GenerateStep
         job={job}
         langs={langs}
-        setLangs={setLangs}
+        setLangs={saveLanguages}
         generate={generate}
         files={files}
         busy={!!busy}
@@ -420,6 +529,8 @@ export default function App() {
           history={history}
           openHistory={openHistory}
           statuses={statuses}
+          activeJobId={job.id}
+          navigationBusy={Boolean(busy || (analysisRun && !analysisRun.error))}
         />
       </aside>
       <div className="min-w-0">
@@ -429,6 +540,8 @@ export default function App() {
           history={history}
           openHistory={openHistory}
           statuses={statuses}
+          activeJobId={job.id}
+          navigationBusy={Boolean(busy || (analysisRun && !analysisRun.error))}
         />
         <main className="mx-auto w-full max-w-6xl px-4 py-6 sm:px-8 sm:py-10 lg:px-12">
           <PageHeader step={step} />
@@ -485,12 +598,16 @@ function Sidebar({
   history,
   openHistory,
   statuses,
+  activeJobId,
+  navigationBusy,
 }: {
   step: number;
   setStep: (n: number) => void;
   history: Job[];
   openHistory: (id: string) => void;
   statuses: ProviderStatuses;
+  activeJobId: string;
+  navigationBusy: boolean;
 }) {
   return (
     <>
@@ -504,7 +621,7 @@ function Sidebar({
           <Button
             key={label}
             variant="ghost"
-            disabled={index > step}
+            disabled={index > step || navigationBusy}
             onClick={() => setStep(index)}
             className={cn(
               "h-11 w-full justify-start gap-3 px-3 text-muted-foreground",
@@ -537,14 +654,27 @@ function Sidebar({
               <Button
                 key={item.id}
                 variant="ghost"
+                disabled={navigationBusy}
                 onClick={() => openHistory(item.id)}
-                className="h-auto w-full justify-start px-3 py-2 text-left"
+                className={cn(
+                  "h-auto w-full justify-start px-3 py-2 text-left",
+                  item.id === activeJobId && "bg-accent text-accent-foreground",
+                )}
               >
                 <span className="min-w-0">
                   <strong className="block truncate text-sm">{item.role}</strong>
                   <small className="block truncate font-normal text-muted-foreground">
                     {item.company}
                   </small>
+                  <Badge variant="outline" className="mt-1 text-[10px]">
+                    {item.workflow?.step === 4
+                      ? item.workflow.files.length
+                        ? "Arquivos gerados"
+                        : "Revisada"
+                      : item.workflow?.step === 3
+                        ? "Em revisão"
+                        : "Aguardando análise"}
+                  </Badge>
                 </span>
               </Button>
             ))
@@ -1311,6 +1441,7 @@ export function ReviewStep({
   profile,
   analysis,
   decisions,
+  setDecision,
   setDecisions,
   onGapConfirmed,
   next,
@@ -1320,12 +1451,16 @@ export function ReviewStep({
   profile: Profile;
   analysis: Optimization & { score?: number };
   decisions: Record<string, boolean>;
-  setDecisions: (d: Record<string, boolean>) => void;
+  setDecision?: (suggestionId: string, accepted: boolean) => void;
+  setDecisions?: (decisions: Record<string, boolean>) => void;
   onGapConfirmed: (analysis: Optimization & { score?: number }, decisions: Decision[]) => void;
   next: () => void;
   busy: boolean;
 }) {
   const [selectedGap, setSelectedGap] = useState<{ gap: string; index: number } | null>(null);
+  const decide = (suggestionId: string, accepted: boolean) =>
+    setDecision?.(suggestionId, accepted) ||
+    setDecisions?.({ ...decisions, [suggestionId]: accepted });
   const matched = analysis.requirements.filter((r) => r.matched).length;
   const score = analysis.score ?? 0;
   return (
@@ -1392,7 +1527,7 @@ export function ReviewStep({
                     <Button
                       variant={decisions[suggestion.id] === false ? "destructive" : "outline"}
                       size="sm"
-                      onClick={() => setDecisions({ ...decisions, [suggestion.id]: false })}
+                      onClick={() => decide(suggestion.id, false)}
                     >
                       <XCircle className="size-4" />
                       Rejeitar
@@ -1400,7 +1535,7 @@ export function ReviewStep({
                     <Button
                       variant={decisions[suggestion.id] === true ? "default" : "outline"}
                       size="sm"
-                      onClick={() => setDecisions({ ...decisions, [suggestion.id]: true })}
+                      onClick={() => decide(suggestion.id, true)}
                     >
                       <CheckCircle2 className="size-4" />
                       Aceitar
@@ -1663,25 +1798,27 @@ export function GenerateStep({
   updateProfile,
 }: {
   job: Job;
-  langs: string[];
-  setLangs: (l: string[]) => void;
+  langs: Array<"ptbr" | "en">;
+  setLangs: (l: Array<"ptbr" | "en">) => void;
   generate: () => void;
   files: OutputFile[];
   busy: boolean;
   startAnotherJob: () => void;
   updateProfile: () => void;
 }) {
-  const toggle = (lang: string) =>
+  const toggle = (lang: "ptbr" | "en") =>
     setLangs(langs.includes(lang) ? langs.filter((item) => item !== lang) : [...langs, lang]);
   return (
     <div className="space-y-5">
       <Card>
         <CardContent className="flex flex-col gap-4 p-5 sm:flex-row sm:items-center">
           <div className="flex flex-1 flex-wrap gap-4">
-            {[
-              { id: "ptbr", label: "Português" },
-              { id: "en", label: "Inglês" },
-            ].map((language) => (
+            {(
+              [
+                { id: "ptbr", label: "Português" },
+                { id: "en", label: "Inglês" },
+              ] as const
+            ).map((language) => (
               <Label
                 key={language.id}
                 className="flex cursor-pointer items-center gap-2 rounded-lg border px-4 py-3"
